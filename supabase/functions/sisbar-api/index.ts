@@ -10,6 +10,7 @@ type SessionContext = {
     role: "admin" | "employee";
     enrollment: string;
     full_name: string;
+    organization_unit: string | null;
     extension: string | null;
     phone: string | null;
     pin_hash: string;
@@ -114,7 +115,10 @@ async function uploadProductImage(companyId: number, body: Json) {
     cacheControl: "31536000",
     upsert: false,
   });
-  if (error) throw Object.assign(new Error("Não foi possível salvar a foto do produto."), { status: 500, code: "product_image_failed" });
+  if (error) {
+    console.error("product_image_upload_failed", { company_id: companyId, message: error.message });
+    throw Object.assign(new Error("Não foi possível salvar a foto do produto. Tente novamente."), { status: 500, code: "product_image_failed" });
+  }
   return { path, url: db.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path).data.publicUrl };
 }
 
@@ -259,18 +263,19 @@ async function registerEmployee(body: Json) {
   const company = await findCompany(body.company_slug);
   if (!company) return fail(404, "company_not_found", "Empresa não encontrada.");
   if (!company.employee_registration_enabled) {
-    return fail(403, "registration_closed", "O cadastro de funcionários está fechado.");
+    return fail(403, "registration_closed", "O cadastro de usuários está fechado.");
   }
 
   const fullName = text(body.full_name, 140);
   const enrollment = normalizeEnrollment(body.enrollment);
   const pin = validPin(body.pin);
   const departmentId = numericId(body.department_id);
+  const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
   const extension = text(body.extension, 20) || null;
   const phone = digits(body.phone) || null;
 
-  if (fullName.length < 2 || enrollment.length < 2 || !pin || !departmentId) {
-    return fail(400, "invalid_registration", "Preencha nome, matrícula, setor e um PIN de 4 a 8 números.");
+  if (fullName.length < 2 || enrollment.length < 2 || !pin || !departmentId || organizationUnit.length < 2) {
+    return fail(400, "invalid_registration", "Preencha nome, matrícula, setor, OM e um PIN de 4 a 8 números.");
   }
 
   const { data: department } = await db
@@ -290,6 +295,7 @@ async function registerEmployee(body: Json) {
       role: "employee",
       enrollment,
       full_name: fullName,
+      organization_unit: organizationUnit,
       extension,
       phone,
       pin_hash: pinHash,
@@ -365,6 +371,7 @@ async function login(body: Json) {
         enrollment: account.enrollment,
         full_name: account.full_name,
         department_id: account.department_id,
+        organization_unit: account.organization_unit,
         extension: account.extension,
         phone: account.phone,
         must_change_pin: account.must_change_pin,
@@ -399,6 +406,41 @@ async function changePin(req: Request, body: Json) {
     entity_id: String(session.account.id),
   });
   return respond(200, { ok: true, data: { changed: true } });
+}
+
+async function profileUpdate(req: Request, body: Json) {
+  const session = await requireSession(req);
+  if (session.account.role !== "employee") return fail(403, "employee_required", "Este perfil não pode ser alterado por esta tela.");
+
+  const fullName = text(body.full_name, 140).replace(/\s+/g, " ");
+  const departmentId = numericId(body.department_id);
+  const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
+  const extension = text(body.extension, 20) || null;
+  const phone = digits(body.phone) || null;
+  if (fullName.length < 2 || !departmentId || organizationUnit.length < 2) {
+    return fail(400, "invalid_profile", "Preencha nome, setor e OM.");
+  }
+
+  const { data: department } = await db.from("departments").select("id").eq("id", departmentId).eq("company_id", session.company.id).eq("active", true).maybeSingle();
+  if (!department) return fail(400, "invalid_department", "Setor inválido.");
+
+  const { data: account, error } = await db.from("accounts").update({
+    full_name: fullName,
+    department_id: departmentId,
+    organization_unit: organizationUnit,
+    extension,
+    phone,
+  }).eq("id", session.account.id).eq("company_id", session.company.id).eq("role", "employee").select("id, role, enrollment, full_name, department_id, organization_unit, extension, phone, must_change_pin").maybeSingle();
+  if (error || !account) return fail(500, "profile_failed", "Não foi possível atualizar seus dados.");
+
+  await db.from("audit_logs").insert({
+    company_id: session.company.id,
+    actor_account_id: session.account.id,
+    action: "profile_updated",
+    entity_type: "account",
+    entity_id: String(session.account.id),
+  });
+  return respond(200, { ok: true, data: account });
 }
 
 async function checkout(req: Request, body: Json) {
@@ -529,7 +571,7 @@ async function productUpsert(req: Request, body: Json) {
   const fridgeId = numericId(body.fridge_id);
   const initialStock = Math.max(0, Math.floor(Number(body.initial_stock ?? 0)));
   const minQuantity = Math.max(0, Math.floor(Number(body.min_quantity ?? 5)));
-  if (name.length < 2 || salePrice < 0 || !["refrigerantes", "aguas", "sucos", "doces", "salgados", "outros"].includes(category)) {
+  if (name.length < 2 || salePrice < 0 || !Number.isInteger(initialStock) || !Number.isInteger(minQuantity) || initialStock > 100_000 || minQuantity > 100_000 || (!id && !fridgeId) || !["refrigerantes", "aguas", "sucos", "doces", "salgados", "outros"].includes(category)) {
     return fail(400, "invalid_product", "Confira nome, categoria e preço do produto.");
   }
 
@@ -556,7 +598,21 @@ async function productUpsert(req: Request, body: Json) {
     }
     product = data;
   } else {
-    const { data, error } = await db.from("products").insert({ company_id: session.company.id, ...values }).select().single();
+    const { data, error } = await db.rpc("sisbar_create_product", {
+      p_company_id: session.company.id,
+      p_fridge_id: fridgeId,
+      p_name: name,
+      p_description: description,
+      p_sku: sku,
+      p_category: category,
+      p_sale_price: salePrice,
+      p_cost_price: costPrice,
+      p_image_url: imageUrl,
+      p_active: active,
+      p_initial_stock: initialStock,
+      p_min_quantity: minQuantity,
+      p_admin_id: session.account.id,
+    });
     if (error?.code === "23505") {
       if (uploadedImage) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([uploadedImage.path]);
       return fail(409, "sku_exists", "Já existe um produto com esse código.");
@@ -566,32 +622,21 @@ async function productUpsert(req: Request, body: Json) {
       return fail(500, "product_failed", "Não foi possível cadastrar o produto.");
     }
     product = data;
-    if (fridgeId) {
-      await db.from("inventory").insert({ company_id: session.company.id, fridge_id: fridgeId, product_id: product.id, quantity: 0, min_quantity: minQuantity });
-      if (initialStock > 0) {
-        await db.rpc("sisbar_adjust_stock", {
-          p_company_id: session.company.id,
-          p_fridge_id: fridgeId,
-          p_product_id: product.id,
-          p_delta: initialStock,
-          p_note: "Estoque inicial",
-          p_admin_id: session.account.id,
-        });
-      }
-    }
   }
 
   if (previousImageUrl && previousImageUrl !== imageUrl) {
     const previousPath = productImagePath(previousImageUrl, session.company.id);
     if (previousPath) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([previousPath]);
   }
-  await db.from("audit_logs").insert({
-    company_id: session.company.id,
-    actor_account_id: session.account.id,
-    action: id ? "product_updated" : "product_created",
-    entity_type: "product",
-    entity_id: String(product.id),
-  });
+  if (id) {
+    await db.from("audit_logs").insert({
+      company_id: session.company.id,
+      actor_account_id: session.account.id,
+      action: "product_updated",
+      entity_type: "product",
+      entity_id: String(product.id),
+    });
+  }
   return respond(id ? 200 : 201, { ok: true, data: product });
 }
 
@@ -618,7 +663,7 @@ async function stockAdjust(req: Request, body: Json) {
 async function employeesList(req: Request) {
   const session = await requireAdmin(req);
   const [{ data: employees }, { data: departments }, { data: openSales }] = await Promise.all([
-    db.from("accounts").select("id, department_id, enrollment, full_name, extension, phone, active, created_at").eq("company_id", session.company.id).eq("role", "employee").order("full_name"),
+    db.from("accounts").select("id, department_id, enrollment, full_name, organization_unit, extension, phone, active, created_at").eq("company_id", session.company.id).eq("role", "employee").order("full_name"),
     db.from("departments").select("id, name, active").eq("company_id", session.company.id).order("name"),
     db.from("sales").select("employee_id, total, amount_paid, sold_at").eq("company_id", session.company.id).in("payment_status", ["pending", "partial"]),
   ]);
@@ -685,28 +730,29 @@ async function employeeUpsert(req: Request, body: Json) {
   const enrollment = normalizeEnrollment(body.enrollment);
   const fullName = text(body.full_name, 140);
   const departmentId = numericId(body.department_id);
+  const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
   const extension = text(body.extension, 20) || null;
   const phone = digits(body.phone) || null;
   const pin = body.pin ? validPin(body.pin) : null;
   const active = body.active !== false;
-  if (!enrollment || fullName.length < 2 || !departmentId || (!id && !pin)) {
-    return fail(400, "invalid_employee", "Preencha nome, matrícula, setor e PIN inicial.");
+  if (!enrollment || fullName.length < 2 || !departmentId || organizationUnit.length < 2 || (!id && !pin)) {
+    return fail(400, "invalid_employee", "Preencha nome, matrícula, setor, OM e PIN inicial.");
   }
   const { data: department } = await db.from("departments").select("id").eq("id", departmentId).eq("company_id", session.company.id).maybeSingle();
   if (!department) return fail(400, "invalid_department", "Setor inválido.");
 
-  const values: Json = { enrollment, full_name: fullName, department_id: departmentId, extension, phone, active };
+  const values: Json = { enrollment, full_name: fullName, department_id: departmentId, organization_unit: organizationUnit, extension, phone, active };
   if (pin) values.pin_hash = await hashPin(pin);
   let result;
   if (id) {
     const { data, error } = await db.from("accounts").update(values).eq("id", id).eq("company_id", session.company.id).eq("role", "employee").select("id, enrollment, full_name").maybeSingle();
     if (error?.code === "23505") return fail(409, "enrollment_exists", "Esta matrícula já está em uso.");
-    if (error || !data) return fail(404, "employee_not_found", "Funcionário não encontrado.");
+    if (error || !data) return fail(404, "employee_not_found", "Usuário não encontrado.");
     result = data;
   } else {
     const { data, error } = await db.from("accounts").insert({ ...values, company_id: session.company.id, role: "employee" }).select("id, enrollment, full_name").single();
     if (error?.code === "23505") return fail(409, "enrollment_exists", "Esta matrícula já está em uso.");
-    if (error || !data) return fail(500, "employee_failed", "Não foi possível cadastrar o funcionário.");
+    if (error || !data) return fail(500, "employee_failed", "Não foi possível cadastrar o usuário.");
     result = data;
   }
   await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: id ? "employee_updated" : "employee_created", entity_type: "account", entity_id: String(result.id) });
@@ -721,12 +767,13 @@ async function salesList(req: Request) {
 async function saleCancel(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const saleId = numericId(body.sale_id);
-  if (!saleId) return fail(400, "invalid_sale", "Venda inválida.");
+  const reason = text(body.reason, 300).replace(/\s+/g, " ");
+  if (!saleId || reason.length < 3) return fail(400, "invalid_sale", "Informe a venda e o motivo do cancelamento.");
   const { data, error } = await db.rpc("sisbar_cancel_sale", {
     p_company_id: session.company.id,
     p_sale_id: saleId,
     p_admin_id: session.account.id,
-    p_reason: text(body.reason, 300),
+    p_reason: reason,
   });
   if (error) {
     const message = error.message.includes("sale_has_payments")
@@ -744,7 +791,7 @@ async function saleCancel(req: Request, body: Json) {
 async function receivables(req: Request) {
   const session = await requireAdmin(req);
   const [{ data: employees }, { data: departments }, sales] = await Promise.all([
-    db.from("accounts").select("id, department_id, enrollment, full_name, extension, phone").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
+    db.from("accounts").select("id, department_id, enrollment, full_name, organization_unit, extension, phone").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
     db.from("departments").select("id, name").eq("company_id", session.company.id),
     loadSales(session.company.id, 5000),
   ]);
@@ -771,7 +818,7 @@ async function recordPayment(req: Request, body: Json) {
   const amount = money(body.amount);
   const method = text(body.method, 20);
   if (!employeeId || amount <= 0 || !["pix", "cash", "transfer", "adjustment"].includes(method)) {
-    return fail(400, "invalid_payment", "Confira funcionário, valor e forma de pagamento.");
+    return fail(400, "invalid_payment", "Confira usuário, valor e forma de pagamento.");
   }
   const { data, error } = await db.rpc("sisbar_record_payment", {
     p_company_id: session.company.id,
@@ -802,7 +849,7 @@ async function monthlyReport(req: Request, body: Json) {
   for (const sale of validSales) {
     const employee = sale.employee as { full_name?: string; enrollment?: string } | undefined;
     const key = Number(sale.employee_id);
-    const employeeRow = employeeMap.get(key) ?? { name: employee?.full_name ?? "Funcionário", enrollment: employee?.enrollment ?? "", total: 0, paid: 0, balance: 0 };
+    const employeeRow = employeeMap.get(key) ?? { name: employee?.full_name ?? "Usuário", enrollment: employee?.enrollment ?? "", total: 0, paid: 0, balance: 0 };
     employeeRow.total += money(sale.total);
     employeeRow.paid += money(sale.amount_paid);
     employeeRow.balance += money(sale.total) - money(sale.amount_paid);
@@ -862,6 +909,7 @@ Deno.serve(async (req: Request) => {
       case "login": return await login(body);
       case "logout": return await logout(req);
       case "change_pin": return await changePin(req, body);
+      case "profile_update": return await profileUpdate(req, body);
       case "checkout": return await checkout(req, body);
       case "my_history": return await myHistory(req);
       case "dashboard": return await dashboard(req);

@@ -16,6 +16,22 @@ test("admin includes sale cancellation, departments and product images", async (
   assert.match(admin, /department_upsert/);
   assert.match(admin, /image_data/);
   assert.match(admin, /item\.product_name/);
+  assert.match(admin, /cancelReason/);
+  assert.match(admin, /optimizeProductImage/);
+});
+
+test("user registration and profile include OM and self-service editing", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  const store = await source("app/employee-store.tsx");
+  const api = await source("supabase/functions/sisbar-api/index.ts");
+  assert.match(store, /SecNSNQ/);
+  assert.match(store, /Casnav/);
+  assert.match(store, /Qual é a sua OM/);
+  assert.match(store, /profile_update/);
+  assert.match(admin, /organization_unit/);
+  assert.match(admin, /label: "Usuários"/);
+  assert.match(api, /async function profileUpdate/);
+  assert.match(api, /case "profile_update"/);
 });
 
 test("admin mobile navigation and sales status filters stay available", async () => {
@@ -55,4 +71,13 @@ test("database migration restores stock and configures the image bucket", async 
   assert.match(migration, /sale_has_payments/);
   assert.match(migration, /'product-images'/);
   assert.match(migration, /2097152/);
+});
+
+test("database migration adds OM and atomic product creation", async () => {
+  const migration = await source("supabase/migrations/20260902213537_add_user_om_profile_and_atomic_product.sql");
+  assert.match(migration, /add column if not exists organization_unit text/);
+  assert.match(migration, /create or replace function public\.sisbar_create_product/);
+  assert.match(migration, /insert into public\.inventory/);
+  assert.match(migration, /insert into public\.stock_movements/);
+  assert.match(migration, /grant execute on function public\.sisbar_create_product/);
 });

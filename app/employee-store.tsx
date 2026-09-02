@@ -40,6 +40,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   brl,
+  Account,
   Company,
   DEFAULT_COMPANY,
   DEFAULT_FRIDGE,
@@ -59,6 +60,8 @@ type History = { balance: number; sales: Sale[] };
 type Receipt = { sale_id: number; public_id: string; total: number; payment_status: string };
 
 const EMPLOYEE_SESSION = "sisbar.employee.session";
+const STANDARD_ORGANIZATION_UNITS = ["SecNSNQ", "Casnav"] as const;
+const OTHER_ORGANIZATION_UNIT = "__other__";
 
 const categoryMeta: Record<string, { label: string; icon: typeof CupSoda; tone: string }> = {
   refrigerantes: { label: "Refrigerantes", icon: CupSoda, tone: "bg-rose-50 text-rose-700" },
@@ -86,6 +89,7 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [cart, setCart] = useState<Record<number, number>>({});
   const [session, setSession] = useState<Session | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [view, setView] = useState<"shop" | "history">("shop");
@@ -210,9 +214,14 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               <ReceiptText /> <span className="hidden sm:inline">Meu extrato</span>
             </Button>
             {session ? (
-              <Button variant="outline" size="sm" onClick={() => void logout()} title="Sair">
-                <LogOut /><span className="hidden sm:inline">Sair</span>
-              </Button>
+              <>
+                <Button variant="ghost" size="sm" onClick={() => setProfileOpen(true)}>
+                  <UserRound /><span className="hidden sm:inline">Meus dados</span>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void logout()} title="Sair">
+                  <LogOut /><span className="hidden sm:inline">Sair</span>
+                </Button>
+              </>
             ) : (
               <Button variant="outline" size="sm" onClick={() => setAuthOpen(true)}><LogIn /> Entrar</Button>
             )}
@@ -258,6 +267,11 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       )}
 
       <AuthDialog open={authOpen} onOpenChange={setAuthOpen} companySlug={companySlug} departments={catalog.departments} registrationEnabled={catalog.company.registration_enabled !== false} onAuthenticated={handleAuthenticated} />
+      {session && <ProfileDialog key={`${session.account.id}:${session.account.organization_unit ?? ""}:${profileOpen}`} open={profileOpen} onOpenChange={setProfileOpen} departments={catalog.departments} session={session} onUpdated={(account) => {
+        const nextSession = { ...session, account };
+        saveSession(EMPLOYEE_SESSION, nextSession);
+        setSession(nextSession);
+      }} />}
       <CheckoutDialog
         open={checkoutOpen}
         onOpenChange={setCheckoutOpen}
@@ -367,6 +381,7 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
   const [busy, setBusy] = useState(false);
   const [enrollment, setEnrollment] = useState("");
   const [pin, setPin] = useState("");
+  const [organizationUnit, setOrganizationUnit] = useState("");
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);
@@ -385,6 +400,7 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
         full_name: form.get("full_name"),
         enrollment: form.get("enrollment"),
         department_id: Number(form.get("department_id")),
+        organization_unit: organizationUnit === OTHER_ORGANIZATION_UNIT ? form.get("organization_unit_other") : organizationUnit,
         extension: form.get("extension"),
         phone: form.get("phone"),
         pin: form.get("pin"),
@@ -400,7 +416,7 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{mode === "login" ? "Identifique-se" : "Cadastro de funcionário"}</DialogTitle>
+          <DialogTitle>{mode === "login" ? "Identifique-se" : "Cadastro de usuário"}</DialogTitle>
           <DialogDescription>{mode === "login" ? "Use sua matrícula e seu PIN para registrar a retirada." : "Cadastre-se uma vez para usar o SISBAR nas próximas compras."}</DialogDescription>
         </DialogHeader>
         {mode === "login" ? (
@@ -417,6 +433,7 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
               <div className="space-y-2"><Label htmlFor="register-enrollment">Matrícula</Label><Input id="register-enrollment" name="enrollment" required /></div>
               <div className="space-y-2"><Label>Setor</Label><Select name="department_id" required><SelectTrigger className="w-full"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{departments.map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div>
             </div>
+            <OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="register" />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2"><Label htmlFor="extension">Ramal</Label><Input id="extension" name="extension" /></div>
               <div className="space-y-2"><Label htmlFor="phone">WhatsApp</Label><Input id="phone" name="phone" inputMode="tel" placeholder="DDD + número" /></div>
@@ -426,6 +443,79 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
             <button type="button" className="w-full text-sm font-medium text-[#1f5f8b] hover:underline" onClick={() => setMode("login")}>Já tenho cadastro</button>
           </form>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OrganizationUnitFields({ value, onValueChange, idPrefix, customDefaultValue = "" }: { value: string; onValueChange: (value: string) => void; idPrefix: string; customDefaultValue?: string }) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label htmlFor={`${idPrefix}-organization-unit`}>OM</Label>
+        <Select value={value} onValueChange={onValueChange} required>
+          <SelectTrigger id={`${idPrefix}-organization-unit`} className="w-full"><SelectValue placeholder="Selecione sua OM" /></SelectTrigger>
+          <SelectContent>
+            {STANDARD_ORGANIZATION_UNITS.map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}
+            <SelectItem value={OTHER_ORGANIZATION_UNIT}>Outros</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {value === OTHER_ORGANIZATION_UNIT && (
+        <div className="space-y-2">
+          <Label htmlFor={`${idPrefix}-organization-unit-other`}>Qual é a sua OM?</Label>
+          <Input id={`${idPrefix}-organization-unit-other`} name="organization_unit_other" defaultValue={customDefaultValue} maxLength={100} placeholder="Digite o nome da OM" required />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProfileDialog({ open, onOpenChange, departments, session, onUpdated }: { open: boolean; onOpenChange: (open: boolean) => void; departments: Department[]; session: Session; onUpdated: (account: Account) => void }) {
+  const currentOrganizationUnit = session.account.organization_unit ?? "";
+  const isStandardUnit = STANDARD_ORGANIZATION_UNITS.some((unit) => unit === currentOrganizationUnit);
+  const [organizationUnit, setOrganizationUnit] = useState(isStandardUnit ? currentOrganizationUnit : currentOrganizationUnit ? OTHER_ORGANIZATION_UNIT : "");
+  const [busy, setBusy] = useState(false);
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    try {
+      const account = await sisbarApi<Account>("profile_update", {
+        full_name: form.get("full_name"),
+        department_id: Number(form.get("department_id")),
+        organization_unit: organizationUnit === OTHER_ORGANIZATION_UNIT ? form.get("organization_unit_other") : organizationUnit,
+        extension: form.get("extension"),
+        phone: form.get("phone"),
+      }, session.token);
+      onUpdated(account);
+      onOpenChange(false);
+      toast.success("Seus dados foram atualizados.");
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+        <DialogHeader><DialogTitle>Meus dados</DialogTitle><DialogDescription>Atualize suas informações de identificação e contato.</DialogDescription></DialogHeader>
+        <form className="space-y-4" onSubmit={save}>
+          <div className="space-y-2"><Label htmlFor="profile-name">Nome completo</Label><Input id="profile-name" name="full_name" defaultValue={session.account.full_name} required /></div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="profile-enrollment">Matrícula</Label><Input id="profile-enrollment" value={session.account.enrollment} readOnly className="bg-slate-50" /><p className="text-xs text-slate-500">A matrícula de acesso não é alterada aqui.</p></div>
+            <div className="space-y-2"><Label>Setor</Label><Select name="department_id" defaultValue={String(session.account.department_id ?? "")} required><SelectTrigger className="w-full"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{departments.map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+          <OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="profile" customDefaultValue={isStandardUnit ? "" : currentOrganizationUnit} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="profile-extension">Ramal</Label><Input id="profile-extension" name="extension" defaultValue={session.account.extension ?? ""} /></div>
+            <div className="space-y-2"><Label htmlFor="profile-phone">WhatsApp</Label><Input id="profile-phone" name="phone" inputMode="tel" defaultValue={session.account.phone ?? ""} placeholder="DDD + número" /></div>
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar meus dados"}</Button></DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
@@ -482,7 +572,7 @@ function HistoryView({ history, loading, onBack }: { history: History | null; lo
   return (
     <div className="mx-auto min-h-[calc(100vh-9rem)] max-w-4xl px-4 py-8 sm:px-6">
       <Button variant="ghost" className="mb-5 -ml-3" onClick={onBack}><ArrowLeft /> Voltar ao catálogo</Button>
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-[#ef7d22]">CONTA DO FUNCIONÁRIO</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Meu extrato</h1><p className="mt-2 text-sm text-slate-600">Todas as retiradas e pagamentos confirmados.</p></div><Card className="gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4"><p className="text-xs text-slate-500">Saldo em aberto</p><p className="mt-1 text-2xl font-bold text-[#102a43]">{brl.format(history?.balance ?? 0)}</p></CardContent></Card></div>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-sm font-semibold text-[#ef7d22]">CONTA DO USUÁRIO</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Meu extrato</h1><p className="mt-2 text-sm text-slate-600">Todas as retiradas e pagamentos confirmados.</p></div><Card className="gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4"><p className="text-xs text-slate-500">Saldo em aberto</p><p className="mt-1 text-2xl font-bold text-[#102a43]">{brl.format(history?.balance ?? 0)}</p></CardContent></Card></div>
       <div className="mt-7 space-y-3">
         {loading ? <p className="py-12 text-center text-sm text-slate-500">Carregando extrato...</p> : history?.sales.length ? history.sales.map((sale) => {
           const items = sale.sale_items ?? sale.items ?? [];

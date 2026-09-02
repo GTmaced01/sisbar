@@ -35,6 +35,7 @@ export type Account = {
   enrollment: string;
   full_name: string;
   department_id?: number | null;
+  organization_unit?: string | null;
   extension?: string | null;
   phone?: string | null;
   must_change_pin?: boolean;
@@ -60,6 +61,7 @@ export type Employee = {
   id: number;
   department_id: number;
   department_name: string;
+  organization_unit?: string | null;
   enrollment: string;
   full_name: string;
   extension?: string | null;
