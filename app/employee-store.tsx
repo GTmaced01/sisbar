@@ -195,10 +195,10 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f8fa] text-slate-950">
+    <main className="min-h-screen overflow-x-hidden bg-[#f7f8fa] text-slate-950">
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-          <button className="flex items-center gap-3 text-left" onClick={() => setView("shop")}>
+          <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => setView("shop")}>
             <span className="grid size-9 place-items-center rounded-lg bg-[#102a43] text-white"><Refrigerator className="size-5" /></span>
             <span>
               <span className="block text-lg font-black tracking-tight text-[#102a43]">SISBAR</span>
@@ -223,8 +223,8 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       {view === "history" ? (
         <HistoryView history={history} loading={historyLoading} onBack={() => setView("shop")} />
       ) : (
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[1fr_340px] lg:py-10">
-          <section>
+        <div className="mx-auto grid min-w-0 max-w-7xl gap-8 px-4 py-7 sm:px-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:py-10">
+          <section className="min-w-0">
             <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
                 <Badge variant="secondary" className="mb-3 bg-orange-50 text-orange-800 hover:bg-orange-50">{catalog.fridge.name}</Badge>
@@ -236,7 +236,7 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               {session && <p className="text-sm text-slate-600">Comprando como <strong className="text-slate-900">{session.account.full_name}</strong></p>}
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {catalog.products.map((product) => (
                 <ProductCard key={product.id} product={product} quantity={cart[product.id] ?? 0} onChange={(delta) => updateQuantity(product, delta)} />
               ))}
@@ -250,8 +250,8 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       )}
 
       {view === "shop" && quantityOf(cart) > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white p-3 shadow-[0_-8px_30px_rgba(15,23,42,.08)] lg:hidden">
-          <Button className="h-12 w-full bg-[#ef7d22] text-base hover:bg-[#d86d18]" onClick={() => setCheckoutOpen(true)}>
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white px-3 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(15,23,42,.08)] lg:hidden">
+          <Button className="mx-auto flex h-12 w-full max-w-xl bg-[#ef7d22] px-3 text-sm hover:bg-[#d86d18] sm:text-base" onClick={() => setCheckoutOpen(true)}>
             <ShoppingBasket /> Ver carrinho · {quantityOf(cart)} {quantityOf(cart) === 1 ? "item" : "itens"} · {brl.format(cartTotal)}
           </Button>
         </div>
@@ -277,8 +277,8 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       />
       <ReceiptDialog receipt={receipt} company={catalog.company} onClose={() => setReceipt(null)} />
 
-      <footer className="border-t border-slate-200 bg-white px-4 py-6 text-center text-xs text-slate-500">
-        SISBAR · Sistema Integrado de Bar <button className="ml-2 underline underline-offset-4 hover:text-slate-900" onClick={onOpenAdmin}>Acesso administrativo</button>
+      <footer className="border-t border-slate-200 bg-white px-4 py-6 text-center text-xs leading-6 text-slate-500">
+        SISBAR · Sistema Integrado de Bar <button className="mx-1 whitespace-nowrap underline underline-offset-4 hover:text-slate-900" onClick={onOpenAdmin}>Acesso administrativo</button>
       </footer>
     </main>
   );
@@ -300,8 +300,8 @@ function ProductCard({ product, quantity, onChange }: { product: Product; quanti
   const Icon = meta.icon;
   const soldOut = product.quantity <= 0;
   return (
-    <Card className="group gap-0 overflow-hidden border-slate-200 bg-white py-0 shadow-none transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
-      <CardContent className="flex h-full flex-col p-5">
+    <Card className="group min-w-0 gap-0 overflow-hidden border-slate-200 bg-white py-0 shadow-none transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
+      <CardContent className="flex h-full flex-col p-4 sm:p-5">
         <div className="flex items-start justify-between gap-3">
           {product.image_url ? <Image src={product.image_url} alt="" width={48} height={48} className="size-12 rounded-xl border border-slate-200 object-cover" /> : <span className={`grid size-12 place-items-center rounded-xl ${meta.tone}`}><Icon className="size-6" /></span>}
           <Badge variant={soldOut ? "secondary" : product.quantity <= product.min_quantity ? "outline" : "secondary"} className={product.quantity <= product.min_quantity && !soldOut ? "border-amber-300 bg-amber-50 text-amber-800" : ""}>
@@ -446,8 +446,8 @@ function CheckoutDialog({ open, onOpenChange, items, total, session, company, fr
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader><DialogTitle>Confirmar retirada</DialogTitle><DialogDescription>Revise os itens antes de abrir a geladeira.</DialogDescription></DialogHeader>
-        <div className="space-y-3 rounded-lg border border-slate-200 p-4">
-          {items.map(({ product, quantity }) => <div className="flex items-center gap-3" key={product.id}><span className="flex-1 text-sm font-medium">{product.name}</span><div className="flex items-center rounded-md border"><Button size="icon-xs" variant="ghost" onClick={() => onChange(product, -1)}><Minus /></Button><span className="w-7 text-center text-xs font-semibold">{quantity}</span><Button size="icon-xs" variant="ghost" onClick={() => onChange(product, 1)}><Plus /></Button></div><span className="w-20 text-right text-sm">{brl.format(product.sale_price * quantity)}</span></div>)}
+        <div className="min-w-0 space-y-3 rounded-lg border border-slate-200 p-3 sm:p-4">
+          {items.map(({ product, quantity }) => <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2" key={product.id}><div className="min-w-0"><p className="truncate text-sm font-medium">{product.name}</p><p className="mt-0.5 text-xs text-slate-500">{brl.format(product.sale_price * quantity)}</p></div><div className="flex shrink-0 items-center rounded-md border"><Button size="icon-xs" variant="ghost" onClick={() => onChange(product, -1)}><Minus /></Button><span className="w-7 text-center text-xs font-semibold">{quantity}</span><Button size="icon-xs" variant="ghost" onClick={() => onChange(product, 1)}><Plus /></Button></div></div>)}
           <div className="flex items-center justify-between border-t pt-3"><strong>Total</strong><strong className="text-xl">{brl.format(total)}</strong></div>
         </div>
         {session ? (
@@ -486,7 +486,7 @@ function HistoryView({ history, loading, onBack }: { history: History | null; lo
       <div className="mt-7 space-y-3">
         {loading ? <p className="py-12 text-center text-sm text-slate-500">Carregando extrato...</p> : history?.sales.length ? history.sales.map((sale) => {
           const items = sale.sale_items ?? sale.items ?? [];
-          return <Card key={sale.id} className="gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><p className={`font-medium ${sale.payment_status === "cancelled" ? "text-slate-400 line-through" : ""}`}>{items.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"}</p><p className="mt-1 text-xs text-slate-500">{shortDate.format(new Date(sale.sold_at))} · #{sale.public_id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="font-semibold">{brl.format(sale.total)}</p><Badge className={`mt-1 ${sale.payment_status === "paid" ? "bg-emerald-50 text-emerald-700" : sale.payment_status === "partial" ? "bg-amber-50 text-amber-800" : sale.payment_status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} variant="secondary">{sale.payment_status === "paid" ? "Pago" : sale.payment_status === "partial" ? "Parcial" : sale.payment_status === "cancelled" ? "Cancelada" : "Em aberto"}</Badge></div></div></CardContent></Card>;
+          return <Card key={sale.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:p-5"><div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4"><div className="min-w-0 flex-1"><p className={`break-words font-medium ${sale.payment_status === "cancelled" ? "text-slate-400 line-through" : ""}`}>{items.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"}</p><p className="mt-1 text-xs text-slate-500">{shortDate.format(new Date(sale.sold_at))} · #{sale.public_id.slice(0, 8).toUpperCase()}</p></div><div className="flex items-center justify-between gap-3 sm:block sm:text-right"><p className="font-semibold">{brl.format(sale.total)}</p><Badge className={`sm:mt-1 ${sale.payment_status === "paid" ? "bg-emerald-50 text-emerald-700" : sale.payment_status === "partial" ? "bg-amber-50 text-amber-800" : sale.payment_status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} variant="secondary">{sale.payment_status === "paid" ? "Pago" : sale.payment_status === "partial" ? "Parcial" : sale.payment_status === "cancelled" ? "Cancelada" : "Em aberto"}</Badge></div></div></CardContent></Card>;
         }) : <div className="rounded-xl border border-dashed border-slate-300 py-14 text-center"><ReceiptText className="mx-auto size-8 text-slate-300" /><p className="mt-3 text-sm font-medium">Nenhuma retirada registrada</p></div>}
       </div>
     </div>
