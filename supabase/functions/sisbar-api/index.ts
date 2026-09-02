@@ -38,6 +38,13 @@ if (!supabaseUrl || !supabaseSecret) {
 const db = createClient(supabaseUrl, supabaseSecret, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+const PRODUCT_IMAGE_BUCKET = "product-images";
+const PRODUCT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const PRODUCT_IMAGE_TYPES = new Map([
+  ["image/jpeg", "jpg"],
+  ["image/png", "png"],
+  ["image/webp", "webp"],
+]);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -79,6 +86,50 @@ function digits(value: unknown) {
 function money(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
+}
+
+async function uploadProductImage(companyId: number, body: Json) {
+  const contentType = text(body.image_content_type, 40).toLowerCase();
+  const extension = PRODUCT_IMAGE_TYPES.get(contentType);
+  const base64 = typeof body.image_data === "string" ? body.image_data.trim() : "";
+  if (!base64 || !extension) {
+    throw Object.assign(new Error("Use uma imagem JPG, PNG ou WebP."), { status: 400, code: "invalid_product_image" });
+  }
+  if (base64.length > Math.ceil(PRODUCT_IMAGE_MAX_BYTES * 4 / 3) + 16) {
+    throw Object.assign(new Error("A foto deve ter no máximo 2 MB."), { status: 400, code: "product_image_too_large" });
+  }
+  let bytes: Uint8Array;
+  try {
+    const binary = atob(base64);
+    bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw Object.assign(new Error("A foto enviada é inválida."), { status: 400, code: "invalid_product_image" });
+  }
+  if (bytes.byteLength > PRODUCT_IMAGE_MAX_BYTES) {
+    throw Object.assign(new Error("A foto deve ter no máximo 2 MB."), { status: 400, code: "product_image_too_large" });
+  }
+  const path = `${companyId}/${crypto.randomUUID()}.${extension}`;
+  const { error } = await db.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, bytes, {
+    contentType,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error) throw Object.assign(new Error("Não foi possível salvar a foto do produto."), { status: 500, code: "product_image_failed" });
+  return { path, url: db.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(path).data.publicUrl };
+}
+
+function productImagePath(urlValue: unknown, companyId: number) {
+  const url = text(urlValue, 2_000);
+  const marker = `/storage/v1/object/public/${PRODUCT_IMAGE_BUCKET}/`;
+  try {
+    const parsed = new URL(url);
+    const markerIndex = parsed.pathname.indexOf(marker);
+    if (markerIndex < 0) return null;
+    const path = decodeURIComponent(parsed.pathname.slice(markerIndex + marker.length));
+    return path.startsWith(`${companyId}/`) ? path : null;
+  } catch {
+    return null;
+  }
 }
 
 async function sha256(value: string) {
@@ -389,7 +440,7 @@ async function myHistory(req: Request) {
     .eq("employee_id", session.account.id)
     .order("sold_at", { ascending: false })
     .limit(60);
-  const balance = (sales ?? []).reduce((sum, sale) => sum + money(sale.total) - money(sale.amount_paid), 0);
+  const balance = (sales ?? []).filter((sale) => sale.payment_status !== "cancelled").reduce((sum, sale) => sum + money(sale.total) - money(sale.amount_paid), 0);
   return respond(200, { ok: true, data: { balance: money(balance), sales: sales ?? [] } });
 }
 
@@ -469,6 +520,7 @@ async function productUpsert(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const id = numericId(body.id);
   const name = text(body.name, 120);
+  const description = text(body.description, 500) || null;
   const sku = normalizeEnrollment(body.sku) || null;
   const category = text(body.category, 30);
   const salePrice = money(body.sale_price);
@@ -481,15 +533,38 @@ async function productUpsert(req: Request, body: Json) {
     return fail(400, "invalid_product", "Confira nome, categoria e preço do produto.");
   }
 
+  let current: Json | null = null;
+  if (id) {
+    const { data } = await db.from("products").select("*").eq("id", id).eq("company_id", session.company.id).maybeSingle();
+    if (!data) return fail(404, "product_not_found", "Produto não encontrado.");
+    current = data as Json;
+  }
+
+  let uploadedImage: { path: string; url: string } | null = null;
+  if (typeof body.image_data === "string" && body.image_data.length > 0) {
+    uploadedImage = await uploadProductImage(session.company.id, body);
+  }
+  const previousImageUrl = current?.image_url ?? null;
+  const imageUrl = uploadedImage?.url ?? (body.remove_image === true ? null : previousImageUrl);
+  const values = { name, description, sku, category, sale_price: salePrice, cost_price: costPrice, image_url: imageUrl, active };
   let product;
   if (id) {
-    const { data, error } = await db.from("products").update({ name, sku, category, sale_price: salePrice, cost_price: costPrice, active }).eq("id", id).eq("company_id", session.company.id).select().maybeSingle();
-    if (error || !data) return fail(404, "product_not_found", "Produto não encontrado.");
+    const { data, error } = await db.from("products").update(values).eq("id", id).eq("company_id", session.company.id).select().maybeSingle();
+    if (error || !data) {
+      if (uploadedImage) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([uploadedImage.path]);
+      return fail(500, "product_failed", "Não foi possível atualizar o produto.");
+    }
     product = data;
   } else {
-    const { data, error } = await db.from("products").insert({ company_id: session.company.id, name, sku, category, sale_price: salePrice, cost_price: costPrice, active }).select().single();
-    if (error?.code === "23505") return fail(409, "sku_exists", "Já existe um produto com esse código.");
-    if (error || !data) return fail(500, "product_failed", "Não foi possível cadastrar o produto.");
+    const { data, error } = await db.from("products").insert({ company_id: session.company.id, ...values }).select().single();
+    if (error?.code === "23505") {
+      if (uploadedImage) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([uploadedImage.path]);
+      return fail(409, "sku_exists", "Já existe um produto com esse código.");
+    }
+    if (error || !data) {
+      if (uploadedImage) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([uploadedImage.path]);
+      return fail(500, "product_failed", "Não foi possível cadastrar o produto.");
+    }
     product = data;
     if (fridgeId) {
       await db.from("inventory").insert({ company_id: session.company.id, fridge_id: fridgeId, product_id: product.id, quantity: 0, min_quantity: minQuantity });
@@ -506,6 +581,10 @@ async function productUpsert(req: Request, body: Json) {
     }
   }
 
+  if (previousImageUrl && previousImageUrl !== imageUrl) {
+    const previousPath = productImagePath(previousImageUrl, session.company.id);
+    if (previousPath) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([previousPath]);
+  }
   await db.from("audit_logs").insert({
     company_id: session.company.id,
     actor_account_id: session.account.id,
@@ -563,6 +642,43 @@ async function employeesList(req: Request) {
   return respond(200, { ok: true, data: { employees: rows, departments: departments ?? [] } });
 }
 
+async function departmentsList(req: Request) {
+  const session = await requireAdmin(req);
+  const [{ data: departments }, { data: employees }] = await Promise.all([
+    db.from("departments").select("id, name, active, created_at").eq("company_id", session.company.id).order("name"),
+    db.from("accounts").select("id, department_id").eq("company_id", session.company.id).eq("role", "employee"),
+  ]);
+  const counts = new Map<number, number>();
+  for (const employee of employees ?? []) {
+    const departmentId = Number(employee.department_id);
+    if (departmentId) counts.set(departmentId, (counts.get(departmentId) ?? 0) + 1);
+  }
+  return respond(200, { ok: true, data: { departments: (departments ?? []).map((department) => ({ ...department, employee_count: counts.get(Number(department.id)) ?? 0 })) } });
+}
+
+async function departmentUpsert(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const name = text(body.name, 80).replace(/\s+/g, " ");
+  const active = body.active !== false;
+  if (name.length < 2) return fail(400, "invalid_department", "Informe um nome de setor com pelo menos 2 caracteres.");
+
+  let result;
+  if (id) {
+    const { data, error } = await db.from("departments").update({ name, active }).eq("id", id).eq("company_id", session.company.id).select("id, name, active").maybeSingle();
+    if (error?.code === "23505") return fail(409, "department_exists", "Já existe um setor com esse nome.");
+    if (error || !data) return fail(404, "department_not_found", "Setor não encontrado.");
+    result = data;
+  } else {
+    const { data, error } = await db.from("departments").insert({ company_id: session.company.id, name, active }).select("id, name, active").single();
+    if (error?.code === "23505") return fail(409, "department_exists", "Já existe um setor com esse nome.");
+    if (error || !data) return fail(500, "department_failed", "Não foi possível cadastrar o setor.");
+    result = data;
+  }
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: id ? "department_updated" : "department_created", entity_type: "department", entity_id: String(result.id), metadata: { name, active } });
+  return respond(id ? 200 : 201, { ok: true, data: result });
+}
+
 async function employeeUpsert(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const id = numericId(body.id);
@@ -600,6 +716,29 @@ async function employeeUpsert(req: Request, body: Json) {
 async function salesList(req: Request) {
   const session = await requireAdmin(req);
   return respond(200, { ok: true, data: { sales: await loadSales(session.company.id, 200) } });
+}
+
+async function saleCancel(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const saleId = numericId(body.sale_id);
+  if (!saleId) return fail(400, "invalid_sale", "Venda inválida.");
+  const { data, error } = await db.rpc("sisbar_cancel_sale", {
+    p_company_id: session.company.id,
+    p_sale_id: saleId,
+    p_admin_id: session.account.id,
+    p_reason: text(body.reason, 300),
+  });
+  if (error) {
+    const message = error.message.includes("sale_has_payments")
+      ? "Esta venda já possui pagamento registrado e não pode ser cancelada."
+      : error.message.includes("sale_already_cancelled")
+        ? "Esta venda já foi cancelada."
+        : error.message.includes("sale_not_found")
+          ? "Venda não encontrada."
+          : "Não foi possível cancelar a venda.";
+    return fail(409, "sale_cancel_failed", message);
+  }
+  return respond(200, { ok: true, data });
 }
 
 async function receivables(req: Request) {
@@ -730,8 +869,11 @@ Deno.serve(async (req: Request) => {
       case "product_upsert": return await productUpsert(req, body);
       case "stock_adjust": return await stockAdjust(req, body);
       case "employees_list": return await employeesList(req);
+      case "departments_list": return await departmentsList(req);
+      case "department_upsert": return await departmentUpsert(req, body);
       case "employee_upsert": return await employeeUpsert(req, body);
       case "sales_list": return await salesList(req);
+      case "sale_cancel": return await saleCancel(req, body);
       case "receivables": return await receivables(req);
       case "record_payment": return await recordPayment(req, body);
       case "monthly_report": return await monthlyReport(req, body);

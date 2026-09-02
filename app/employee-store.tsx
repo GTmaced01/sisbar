@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft,
@@ -302,7 +303,7 @@ function ProductCard({ product, quantity, onChange }: { product: Product; quanti
     <Card className="group gap-0 overflow-hidden border-slate-200 bg-white py-0 shadow-none transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md">
       <CardContent className="flex h-full flex-col p-5">
         <div className="flex items-start justify-between gap-3">
-          <span className={`grid size-12 place-items-center rounded-xl ${meta.tone}`}><Icon className="size-6" /></span>
+          {product.image_url ? <Image src={product.image_url} alt="" width={48} height={48} className="size-12 rounded-xl border border-slate-200 object-cover" /> : <span className={`grid size-12 place-items-center rounded-xl ${meta.tone}`}><Icon className="size-6" /></span>}
           <Badge variant={soldOut ? "secondary" : product.quantity <= product.min_quantity ? "outline" : "secondary"} className={product.quantity <= product.min_quantity && !soldOut ? "border-amber-300 bg-amber-50 text-amber-800" : ""}>
             {soldOut ? "Esgotado" : `${product.quantity} disponíveis`}
           </Badge>
@@ -485,7 +486,7 @@ function HistoryView({ history, loading, onBack }: { history: History | null; lo
       <div className="mt-7 space-y-3">
         {loading ? <p className="py-12 text-center text-sm text-slate-500">Carregando extrato...</p> : history?.sales.length ? history.sales.map((sale) => {
           const items = sale.sale_items ?? sale.items ?? [];
-          return <Card key={sale.id} className="gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><p className="font-medium">{items.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"}</p><p className="mt-1 text-xs text-slate-500">{shortDate.format(new Date(sale.sold_at))} · #{sale.public_id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="font-semibold">{brl.format(sale.total)}</p><Badge className={`mt-1 ${sale.payment_status === "paid" ? "bg-emerald-50 text-emerald-700" : sale.payment_status === "partial" ? "bg-amber-50 text-amber-800" : "bg-slate-100 text-slate-700"}`} variant="secondary">{sale.payment_status === "paid" ? "Pago" : sale.payment_status === "partial" ? "Parcial" : "Em aberto"}</Badge></div></div></CardContent></Card>;
+          return <Card key={sale.id} className="gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><p className={`font-medium ${sale.payment_status === "cancelled" ? "text-slate-400 line-through" : ""}`}>{items.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"}</p><p className="mt-1 text-xs text-slate-500">{shortDate.format(new Date(sale.sold_at))} · #{sale.public_id.slice(0, 8).toUpperCase()}</p></div><div className="text-right"><p className="font-semibold">{brl.format(sale.total)}</p><Badge className={`mt-1 ${sale.payment_status === "paid" ? "bg-emerald-50 text-emerald-700" : sale.payment_status === "partial" ? "bg-amber-50 text-amber-800" : sale.payment_status === "cancelled" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-700"}`} variant="secondary">{sale.payment_status === "paid" ? "Pago" : sale.payment_status === "partial" ? "Parcial" : sale.payment_status === "cancelled" ? "Cancelada" : "Em aberto"}</Badge></div></div></CardContent></Card>;
         }) : <div className="rounded-xl border border-dashed border-slate-300 py-14 text-center"><ReceiptText className="mx-auto size-8 text-slate-300" /><p className="mt-3 text-sm font-medium">Nenhuma retirada registrada</p></div>}
       </div>
     </div>

@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
+  Building2,
   Boxes,
   CheckCircle2,
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   LogOut,
   Menu,
   MessageCircle,
+  ImageIcon,
   PackagePlus,
   Pencil,
   Plus,
@@ -34,10 +36,21 @@ import {
   UserPlus,
   Users,
   WalletCards,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -72,10 +85,11 @@ import {
   sisbarApi,
 } from "@/lib/sisbar";
 
-type AdminView = "dashboard" | "sales" | "receivables" | "products" | "employees" | "report" | "settings";
+type AdminView = "dashboard" | "sales" | "receivables" | "products" | "employees" | "departments" | "report" | "settings";
 type DashboardData = { metrics: { sold: number; received: number; receivable: number; low_stock: number; employees: number }; recent_sales: Sale[] };
 type ProductsData = { products: Product[]; fridges: Fridge[] };
 type EmployeesData = { employees: Employee[]; departments: Department[] };
+type DepartmentsData = { departments: Array<Department & { employee_count: number }> };
 type ReceivablesData = { receivables: Employee[]; total: number };
 type ReportData = {
   month: string;
@@ -92,12 +106,25 @@ const navigation: Array<{ id: AdminView; label: string; icon: typeof LayoutDashb
   { id: "receivables", label: "Contas a receber", icon: CircleDollarSign },
   { id: "products", label: "Produtos e estoque", icon: Boxes },
   { id: "employees", label: "Funcionários", icon: Users },
+  { id: "departments", label: "Setores", icon: Building2 },
   { id: "report", label: "Relatório mensal", icon: FileBarChart },
   { id: "settings", label: "QR e configurações", icon: Settings },
 ];
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Não foi possível concluir a operação.";
+}
+
+async function imageUploadPayload(file: File) {
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+  if (!allowedTypes.includes(file.type)) throw new Error("Use uma imagem JPG, PNG ou WebP.");
+  if (file.size > 2 * 1024 * 1024) throw new Error("A foto deve ter no máximo 2 MB.");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 32_768));
+  }
+  return { image_data: btoa(binary), image_content_type: file.type, image_filename: file.name };
 }
 
 function statusLabel(status: Sale["payment_status"]) {
@@ -118,11 +145,13 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [productsData, setProductsData] = useState<ProductsData | null>(null);
   const [employeesData, setEmployeesData] = useState<EmployeesData | null>(null);
+  const [departmentsData, setDepartmentsData] = useState<DepartmentsData | null>(null);
   const [receivablesData, setReceivablesData] = useState<ReceivablesData | null>(null);
   const [report, setReport] = useState<ReportData | null>(null);
   const [productDialog, setProductDialog] = useState<Product | null | "new">(null);
   const [stockProduct, setStockProduct] = useState<Product | null>(null);
   const [employeeDialog, setEmployeeDialog] = useState<Employee | null | "new">(null);
+  const [departmentDialog, setDepartmentDialog] = useState<Department | null | "new">(null);
   const [paymentEmployee, setPaymentEmployee] = useState<Employee | null>(null);
 
   useEffect(() => { queueMicrotask(() => setSession(readSession(ADMIN_SESSION))); }, []);
@@ -134,6 +163,7 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
       if (target === "sales") setSales((await sisbarApi<{ sales: Sale[] }>("sales_list", {}, activeSession.token)).sales);
       if (target === "products") setProductsData(await sisbarApi<ProductsData>("products_list", {}, activeSession.token));
       if (target === "employees") setEmployeesData(await sisbarApi<EmployeesData>("employees_list", {}, activeSession.token));
+      if (target === "departments") setDepartmentsData(await sisbarApi<DepartmentsData>("departments_list", {}, activeSession.token));
       if (target === "receivables") setReceivablesData(await sisbarApi<ReceivablesData>("receivables", {}, activeSession.token));
     } catch (error) {
       toast.error(errorMessage(error));
@@ -184,18 +214,20 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
         <main className="p-4 sm:p-6 lg:p-8">
           {loading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-slate-200"><div className="h-full w-1/3 animate-pulse bg-[#ef7d22]" /></div>}
           {view === "dashboard" && <DashboardSection data={dashboard} onNavigate={setView} />}
-          {view === "sales" && <SalesSection sales={sales} />}
+          {view === "sales" && <SalesSection sales={sales} session={session} onCancelled={() => void refreshRelated()} />}
           {view === "receivables" && <ReceivablesSection data={receivablesData} onPay={setPaymentEmployee} company={session.company} />}
           {view === "products" && <ProductsSection data={productsData} onNew={() => setProductDialog("new")} onEdit={setProductDialog} onStock={setStockProduct} />}
           {view === "employees" && <EmployeesSection data={employeesData} onNew={() => setEmployeeDialog("new")} onEdit={setEmployeeDialog} />}
+          {view === "departments" && <DepartmentsSection data={departmentsData} onNew={() => setDepartmentDialog("new")} onEdit={setDepartmentDialog} />}
           {view === "report" && <ReportSection report={report} onReport={setReport} session={session} />}
           {view === "settings" && <SettingsSection session={session} companySlug={companySlug} onSessionChange={(next) => { saveSession(ADMIN_SESSION, next); setSession(next); }} />}
         </main>
       </div>
 
-      <ProductDialog openValue={productDialog} data={productsData} session={session} onClose={() => setProductDialog(null)} onSaved={() => { setProductDialog(null); void refreshRelated(); }} />
+      <ProductDialog key={productDialog === "new" ? "new" : productDialog?.id ?? "closed"} openValue={productDialog} data={productsData} session={session} onClose={() => setProductDialog(null)} onSaved={() => { setProductDialog(null); void refreshRelated(); }} />
       <StockDialog product={stockProduct} data={productsData} session={session} onClose={() => setStockProduct(null)} onSaved={() => { setStockProduct(null); void refreshRelated(); }} />
       <EmployeeDialog openValue={employeeDialog} data={employeesData} session={session} onClose={() => setEmployeeDialog(null)} onSaved={() => { setEmployeeDialog(null); void refreshRelated(); }} />
+      <DepartmentDialog openValue={departmentDialog} session={session} onClose={() => setDepartmentDialog(null)} onSaved={() => { setDepartmentDialog(null); void refreshRelated(); }} />
       <PaymentDialog employee={paymentEmployee} session={session} onClose={() => setPaymentEmployee(null)} onSaved={() => { setPaymentEmployee(null); void refreshRelated(); }} />
       <ChangePinDialog session={session} required={session.account.must_change_pin === true} onChanged={() => { const next = { ...session, account: { ...session.account, must_change_pin: false } }; saveSession(ADMIN_SESSION, next); setSession(next); }} />
     </div>
@@ -227,20 +259,58 @@ function DashboardSection({ data, onNavigate }: { data: DashboardData | null; on
   return <><SectionTitle eyebrow="Hoje no SISBAR" title="Visão geral" description="Acompanhe os números principais da operação." /><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{cards.map((card) => { const Icon = card.icon; return <Card key={card.label} className="gap-0 border-slate-200 shadow-none"><CardContent className="p-5"><div className="flex items-start justify-between"><p className="text-sm font-medium text-slate-600">{card.label}</p><span className="grid size-9 place-items-center rounded-lg bg-slate-100 text-[#102a43]"><Icon className="size-4" /></span></div><p className="mt-4 text-2xl font-bold tracking-tight">{card.value}</p><p className="mt-1 text-xs text-slate-500">{card.note}</p></CardContent></Card>; })}</div><div className="mt-6 grid gap-6 xl:grid-cols-[1fr_320px]"><Card className="gap-0 border-slate-200 shadow-none"><CardHeader className="flex-row items-center justify-between"><div><CardTitle>Vendas recentes</CardTitle><CardDescription>Últimas retiradas registradas</CardDescription></div><Button variant="ghost" size="sm" onClick={() => onNavigate("sales")}>Ver todas <ChevronRight /></Button></CardHeader><CardContent>{data?.recent_sales.length ? <SalesTable sales={data.recent_sales.slice(0, 8)} compact /> : <EmptyState icon={ReceiptText} title="Nenhuma venda ainda" text="As retiradas aparecerão aqui." />}</CardContent></Card><Card className="gap-0 border-slate-200 bg-[#102a43] text-white shadow-none"><CardContent className="p-6"><BarChart3 className="size-7 text-[#ef7d22]" /><p className="mt-5 text-sm text-slate-300">Funcionários ativos</p><p className="mt-1 text-4xl font-bold">{metrics?.employees ?? 0}</p><button className="mt-7 flex items-center gap-2 text-sm font-semibold text-white hover:underline" onClick={() => onNavigate("employees")}>Gerenciar funcionários <ChevronRight className="size-4" /></button><div className="mt-6 border-t border-white/10 pt-5"><p className="text-sm text-slate-300">Precisa cobrar os saldos?</p><button className="mt-2 flex items-center gap-2 text-sm font-semibold text-[#ffae70] hover:underline" onClick={() => onNavigate("receivables")}>Abrir contas a receber <ArrowUpRight className="size-4" /></button></div></CardContent></Card></div></>;
 }
 
-function SalesSection({ sales }: { sales: Sale[] }) {
+function SalesSection({ sales, session, onCancelled }: { sales: Sale[]; session: Session; onCancelled: () => void }) {
   const [search, setSearch] = useState("");
-  const filtered = sales.filter((sale) => `${sale.employee?.full_name} ${sale.employee?.enrollment} ${sale.public_id}`.toLowerCase().includes(search.toLowerCase()));
-  return <><SectionTitle eyebrow="Retiradas" title="Vendas" description="Consulte todas as vendas e seus status de pagamento." action={<div className="relative w-full sm:w-72"><Search className="absolute left-3 top-2.5 size-4 text-slate-400" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar funcionário ou venda" /></div>} /><Card className="gap-0 border-slate-200 shadow-none"><CardContent className="p-0">{filtered.length ? <SalesTable sales={filtered} /> : <EmptyState icon={ReceiptText} title="Nenhuma venda encontrada" text="Tente outro termo de busca." />}</CardContent></Card></>;
+  const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const filtered = sales.filter((sale) => `${sale.employee?.full_name} ${sale.employee?.enrollment} ${sale.public_id} ${sale.items?.map((item) => item.product_name).join(" ")}`.toLowerCase().includes(search.toLowerCase()));
+
+  async function cancelSale() {
+    if (!cancelTarget) return;
+    setCancelling(true);
+    try {
+      await sisbarApi("sale_cancel", { sale_id: cancelTarget.id, reason: "Cancelada pelo painel administrativo" }, session.token);
+      toast.success("Venda cancelada e itens devolvidos ao estoque.");
+      setCancelTarget(null);
+      onCancelled();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  return <><SectionTitle eyebrow="Retiradas" title="Vendas" description="Consulte todas as vendas e seus status de pagamento." action={<div className="relative w-full sm:w-72"><Search className="absolute left-3 top-2.5 size-4 text-slate-400" /><Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar funcionário, produto ou venda" /></div>} /><Card className="gap-0 border-slate-200 shadow-none"><CardContent className="p-0">{filtered.length ? <SalesTable sales={filtered} onCancel={setCancelTarget} /> : <EmptyState icon={ReceiptText} title="Nenhuma venda encontrada" text="Tente outro termo de busca." />}</CardContent></Card>
+    <AlertDialog open={Boolean(cancelTarget)} onOpenChange={(open) => { if (!open && !cancelling) setCancelTarget(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Cancelar esta venda?</AlertDialogTitle>
+          <AlertDialogDescription>Os itens serão devolvidos ao estoque e o saldo da pessoa será atualizado. Vendas com pagamento já registrado não podem ser canceladas.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+          <p className="font-medium">{cancelTarget?.employee?.full_name ?? "Funcionário"} · {brl.format(cancelTarget?.total ?? 0)}</p>
+          <p className="mt-1 text-xs text-slate-500">{cancelTarget?.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ")}</p>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={cancelling}>Voltar</AlertDialogCancel>
+          <AlertDialogAction className="bg-rose-700 hover:bg-rose-800" disabled={cancelling} onClick={(event) => { event.preventDefault(); void cancelSale(); }}>{cancelling ? "Cancelando..." : "Cancelar venda"}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  </>;
 }
 
-function SalesTable({ sales, compact = false }: { sales: Sale[]; compact?: boolean }) {
-  return <Table><TableHeader><TableRow><TableHead>Funcionário</TableHead><TableHead>Data</TableHead>{!compact && <TableHead>Itens</TableHead>}<TableHead>Status</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader><TableBody>{sales.map((sale) => <TableRow key={sale.id}><TableCell><p className="font-medium">{sale.employee?.full_name ?? "Funcionário"}</p><p className="text-xs text-slate-500">{sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`}</p></TableCell><TableCell className="text-slate-600">{fullDate.format(new Date(sale.sold_at))}</TableCell>{!compact && <TableCell className="max-w-72 truncate text-slate-600">{sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "—"}</TableCell>}<TableCell><StatusBadge status={sale.payment_status} /></TableCell><TableCell className="text-right font-semibold">{brl.format(sale.total)}</TableCell></TableRow>)}</TableBody></Table>;
+function SalesTable({ sales, compact = false, onCancel }: { sales: Sale[]; compact?: boolean; onCancel?: (sale: Sale) => void }) {
+  return <Table><TableHeader><TableRow><TableHead>Funcionário</TableHead><TableHead>Data</TableHead>{!compact && <TableHead>Itens</TableHead>}<TableHead>Status</TableHead><TableHead className="text-right">Total</TableHead>{onCancel && <TableHead className="text-right">Ações</TableHead>}</TableRow></TableHeader><TableBody>{sales.map((sale) => <TableRow key={sale.id}><TableCell><p className="font-medium">{sale.employee?.full_name ?? "Funcionário"}</p><p className="text-xs text-slate-500">{sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`}</p></TableCell><TableCell className="text-slate-600">{fullDate.format(new Date(sale.sold_at))}</TableCell>{!compact && <TableCell className="max-w-72 truncate text-slate-600">{sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "—"}</TableCell>}<TableCell><StatusBadge status={sale.payment_status} /></TableCell><TableCell className="text-right font-semibold">{brl.format(sale.total)}</TableCell>{onCancel && <TableCell className="text-right">{sale.payment_status !== "cancelled" && Number(sale.amount_paid) === 0 ? <Button variant="ghost" size="sm" className="text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => onCancel(sale)}><XCircle /> Cancelar</Button> : <span className="text-xs text-slate-400">—</span>}</TableCell>}</TableRow>)}</TableBody></Table>;
 }
 
 function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | null; onPay: (employee: Employee) => void; company: Company }) {
   function whatsapp(employee: Employee) {
     if (!digitsOnly(employee.phone)) { toast.error("Cadastre o WhatsApp deste funcionário primeiro."); return; }
-    const due = employee.sales?.slice(0, 8).map((sale) => `• ${fullDate.format(new Date(sale.sold_at))}: ${brl.format(sale.total - sale.amount_paid)}`).join("\n") ?? "";
+    const due = employee.sales?.slice(0, 12).map((sale) => {
+      const products = sale.items?.map((item) => item.quantity > 1 ? `${item.quantity}x ${item.product_name}` : item.product_name).join(", ") || "Retirada";
+      return `• ${fullDate.format(new Date(sale.sold_at))}: ${products} ${brl.format(sale.total - sale.amount_paid)}`;
+    }).join("\n") ?? "";
     const message = `Olá, ${employee.full_name.split(" ")[0]}! Segue seu extrato do ${company.name}:\n${due}\n\nSaldo em aberto: *${brl.format(employee.balance)}*.${company.pix_key ? `\nChave Pix: ${company.pix_key}` : ""}\nObrigado!`;
     window.open(`https://wa.me/55${digitsOnly(employee.phone)}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   }
@@ -248,11 +318,19 @@ function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | 
 }
 
 function ProductsSection({ data, onNew, onEdit, onStock }: { data: ProductsData | null; onNew: () => void; onEdit: (product: Product) => void; onStock: (product: Product) => void }) {
-  return <><SectionTitle eyebrow="Catálogo" title="Produtos e estoque" description="Cadastre itens, preços e acompanhe as quantidades." action={<Button className="bg-[#ef7d22] hover:bg-[#d86d18]" onClick={onNew}><Plus /> Novo produto</Button>} /><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data?.products.map((product) => { const inventory = product.inventories?.[0]; const low = (inventory?.quantity ?? 0) <= (inventory?.min_quantity ?? 0); return <Card key={product.id} className="gap-0 border-slate-200 shadow-none"><CardContent className="p-5"><div className="flex items-start justify-between gap-3"><span className="grid size-10 place-items-center rounded-lg bg-slate-100 text-[#102a43]"><Boxes className="size-5" /></span><Badge variant="secondary" className={!product.active ? "bg-slate-100 text-slate-600" : low ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}>{!product.active ? "Inativo" : low ? "Estoque baixo" : "Disponível"}</Badge></div><h3 className="mt-4 font-semibold">{product.name}</h3><p className="mt-1 text-xs capitalize text-slate-500">{product.category} {product.sku ? `· ${product.sku}` : ""}</p><div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Preço</p><p className="mt-1 font-semibold">{brl.format(product.sale_price)}</p></div><div className={`rounded-lg p-3 ${low ? "bg-amber-50" : "bg-slate-50"}`}><p className="text-xs text-slate-500">Estoque</p><p className="mt-1 font-semibold">{inventory?.quantity ?? 0} un.</p></div></div><div className="mt-4 flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => onEdit(product)}><Pencil /> Editar</Button><Button size="sm" className="flex-1 bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onStock(product)}><PackagePlus /> Ajustar</Button></div></CardContent></Card>; })}</div></>;
+  return <><SectionTitle eyebrow="Catálogo" title="Produtos e estoque" description="Cadastre itens, fotos, preços e acompanhe as quantidades." action={<Button className="bg-[#ef7d22] hover:bg-[#d86d18]" onClick={onNew}><Plus /> Novo produto</Button>} /><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{data?.products.map((product) => { const inventory = product.inventories?.[0]; const low = (inventory?.quantity ?? 0) <= (inventory?.min_quantity ?? 0); return <Card key={product.id} className="gap-0 border-slate-200 shadow-none"><CardContent className="p-5"><div className="flex items-start justify-between gap-3">{product.image_url ? <Image src={product.image_url} alt="" width={48} height={48} className="size-12 rounded-xl border border-slate-200 object-cover" /> : <span className="grid size-12 place-items-center rounded-xl bg-slate-100 text-[#102a43]"><Boxes className="size-5" /></span>}<Badge variant="secondary" className={!product.active ? "bg-slate-100 text-slate-600" : low ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}>{!product.active ? "Inativo" : low ? "Estoque baixo" : "Disponível"}</Badge></div><h3 className="mt-4 font-semibold">{product.name}</h3><p className="mt-1 text-xs capitalize text-slate-500">{product.category} {product.sku ? `· ${product.sku}` : ""}</p><div className="mt-5 grid grid-cols-2 gap-3"><div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Preço</p><p className="mt-1 font-semibold">{brl.format(product.sale_price)}</p></div><div className={`rounded-lg p-3 ${low ? "bg-amber-50" : "bg-slate-50"}`}><p className="text-xs text-slate-500">Estoque</p><p className="mt-1 font-semibold">{inventory?.quantity ?? 0} un.</p></div></div><div className="mt-4 flex gap-2"><Button variant="outline" size="sm" className="flex-1" onClick={() => onEdit(product)}><Pencil /> Editar</Button><Button size="sm" className="flex-1 bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onStock(product)}><PackagePlus /> Ajustar</Button></div></CardContent></Card>; })}</div></>;
 }
 
 function EmployeesSection({ data, onNew, onEdit }: { data: EmployeesData | null; onNew: () => void; onEdit: (employee: Employee) => void }) {
   return <><SectionTitle eyebrow="Equipe" title="Funcionários" description="Gerencie identificação, setor, ramal e acesso." action={<Button className="bg-[#ef7d22] hover:bg-[#d86d18]" onClick={onNew}><UserPlus /> Novo funcionário</Button>} /><Card className="gap-0 border-slate-200 shadow-none"><CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Funcionário</TableHead><TableHead>Setor</TableHead><TableHead>Contato</TableHead><TableHead>Saldo</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader><TableBody>{data?.employees.map((employee) => <TableRow key={employee.id}><TableCell><p className="font-medium">{employee.full_name}</p><p className="text-xs text-slate-500">Matrícula {employee.enrollment}</p></TableCell><TableCell>{employee.department_name}</TableCell><TableCell className="text-slate-600">{employee.extension ? `Ramal ${employee.extension}` : employee.phone || "—"}</TableCell><TableCell className="font-medium">{brl.format(employee.balance)}</TableCell><TableCell><Badge variant="secondary" className={employee.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{employee.active ? "Ativo" : "Inativo"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="icon-sm" onClick={() => onEdit(employee)}><Pencil /></Button></TableCell></TableRow>)}</TableBody></Table></CardContent></Card></>;
+}
+
+function DepartmentsSection({ data, onNew, onEdit }: { data: DepartmentsData | null; onNew: () => void; onEdit: (department: Department) => void }) {
+  return <><SectionTitle eyebrow="Estrutura da empresa" title="Setores" description="Adicione e edite os setores usados no cadastro dos funcionários." action={<Button className="bg-[#ef7d22] hover:bg-[#d86d18]" onClick={onNew}><Plus /> Novo setor</Button>} />
+    <Card className="gap-0 border-slate-200 shadow-none"><CardContent className="p-0">
+      {data?.departments.length ? <Table><TableHeader><TableRow><TableHead>Setor</TableHead><TableHead>Funcionários</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{data.departments.map((department) => <TableRow key={department.id}><TableCell><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-slate-100 text-[#102a43]"><Building2 className="size-4" /></span><span className="font-medium">{department.name}</span></div></TableCell><TableCell>{department.employee_count ?? 0}</TableCell><TableCell><Badge variant="secondary" className={department.active !== false ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{department.active !== false ? "Ativo" : "Inativo"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => onEdit(department)}><Pencil /> Editar</Button></TableCell></TableRow>)}</TableBody></Table> : <EmptyState icon={Building2} title="Nenhum setor cadastrado" text="Crie o primeiro setor da empresa." />}
+    </CardContent></Card>
+  </>;
 }
 
 function ReportSection({ report, onReport, session }: { report: ReportData | null; onReport: (report: ReportData) => void; session: Session }) {
@@ -286,9 +364,77 @@ function SettingsSection({ session, companySlug, onSessionChange }: { session: S
 function ProductDialog({ openValue, data, session, onClose, onSaved }: { openValue: Product | null | "new"; data: ProductsData | null; session: Session; onClose: () => void; onSaved: () => void }) {
   const product = openValue === "new" ? null : openValue;
   const [busy, setBusy] = useState(false);
-  async function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); setBusy(true); try { await sisbarApi("product_upsert", { id: product?.id, name: form.get("name"), sku: form.get("sku"), category: form.get("category"), sale_price: Number(form.get("sale_price")), cost_price: form.get("cost_price"), active: form.get("active") === "on", fridge_id: Number(form.get("fridge_id")), initial_stock: Number(form.get("initial_stock")), min_quantity: Number(form.get("min_quantity")) }, session.token); toast.success(product ? "Produto atualizado." : "Produto cadastrado."); onSaved(); } catch (error) { toast.error(errorMessage(error)); } finally { setBusy(false); } }
+  const [imagePreview, setImagePreview] = useState<string | null>(product?.image_url ?? null);
+  const [removeImage, setRemoveImage] = useState(false);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const image = form.get("image");
+    setBusy(true);
+    try {
+      const upload = image instanceof File && image.size > 0 ? await imageUploadPayload(image) : {};
+      await sisbarApi("product_upsert", {
+        id: product?.id,
+        name: form.get("name"),
+        description: form.get("description"),
+        sku: form.get("sku"),
+        category: form.get("category"),
+        sale_price: Number(form.get("sale_price")),
+        cost_price: form.get("cost_price"),
+        active: form.get("active") === "on",
+        fridge_id: Number(form.get("fridge_id")),
+        initial_stock: Number(form.get("initial_stock")),
+        min_quantity: Number(form.get("min_quantity")),
+        remove_image: removeImage,
+        ...upload,
+      }, session.token);
+      toast.success(product ? "Produto atualizado." : "Produto cadastrado.");
+      onSaved();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
   const inventory = product?.inventories?.[0];
-  return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{product ? "Editar produto" : "Novo produto"}</DialogTitle><DialogDescription>Informe os dados usados no catálogo e no estoque.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="product-name">Nome</Label><Input id="product-name" name="name" defaultValue={product?.name ?? ""} required /></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="product-sku">Código / SKU</Label><Input id="product-sku" name="sku" defaultValue={product?.sku ?? ""} /></div><div className="space-y-2"><Label>Categoria</Label><Select name="category" defaultValue={product?.category ?? "refrigerantes"}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["refrigerantes", "aguas", "sucos", "doces", "salgados", "outros"].map((category) => <SelectItem key={category} value={category}><span className="capitalize">{category}</span></SelectItem>)}</SelectContent></Select></div></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="sale-price">Preço de venda</Label><Input id="sale-price" name="sale_price" type="number" step="0.01" min="0" defaultValue={product?.sale_price ?? ""} required /></div><div className="space-y-2"><Label htmlFor="cost-price">Preço de custo</Label><Input id="cost-price" name="cost_price" type="number" step="0.01" min="0" defaultValue={product?.cost_price ?? ""} /></div></div>{!product && <><div className="space-y-2"><Label>Geladeira</Label><Select name="fridge_id" defaultValue={String(data?.fridges[0]?.id ?? "")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{data?.fridges.map((fridge) => <SelectItem key={fridge.id} value={String(fridge.id)}>{fridge.name}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="initial-stock">Estoque inicial</Label><Input id="initial-stock" name="initial_stock" type="number" min="0" defaultValue="0" /></div><div className="space-y-2"><Label htmlFor="min-stock">Estoque mínimo</Label><Input id="min-stock" name="min_quantity" type="number" min="0" defaultValue={inventory?.min_quantity ?? 5} /></div></div></>}<div className="flex items-center justify-between rounded-lg border p-3"><Label htmlFor="product-active">Produto ativo</Label><Switch id="product-active" name="active" defaultChecked={product?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar produto"}</Button></DialogFooter></form></DialogContent></Dialog>;
+  return (
+    <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{product ? "Editar produto" : "Novo produto"}</DialogTitle>
+          <DialogDescription>Informe os dados usados no catálogo e no estoque.</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={save}>
+          <div className="space-y-2"><Label htmlFor="product-name">Nome</Label><Input id="product-name" name="name" defaultValue={product?.name ?? ""} required /></div>
+          <div className="space-y-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" name="description" defaultValue={product?.description ?? ""} placeholder="Opcional" /></div>
+          <div className="space-y-2">
+            <Label htmlFor="product-image">Foto do item</Label>
+            <div className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
+              {imagePreview ? <Image src={imagePreview} alt="" width={56} height={56} className="size-14 rounded-lg object-cover" /> : <span className="grid size-14 place-items-center rounded-lg bg-slate-100 text-slate-400"><ImageIcon className="size-5" /></span>}
+              <div className="min-w-0 flex-1">
+                <Input id="product-image" name="image" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 2 * 1024 * 1024) { toast.error("A foto deve ter no máximo 2 MB."); event.target.value = ""; return; }
+                  const reader = new FileReader();
+                  reader.onload = () => setImagePreview(String(reader.result));
+                  reader.readAsDataURL(file);
+                  setRemoveImage(false);
+                }} />
+                <p className="mt-1 text-xs text-slate-500">JPG, PNG ou WebP, até 2 MB.</p>
+              </div>
+              {imagePreview && <Button type="button" variant="ghost" size="sm" className="text-rose-700" onClick={() => { setImagePreview(null); setRemoveImage(true); }}>Remover</Button>}
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="product-sku">Código / SKU</Label><Input id="product-sku" name="sku" defaultValue={product?.sku ?? ""} /></div><div className="space-y-2"><Label>Categoria</Label><Select name="category" defaultValue={product?.category ?? "refrigerantes"}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{["refrigerantes", "aguas", "sucos", "doces", "salgados", "outros"].map((category) => <SelectItem key={category} value={category}><span className="capitalize">{category}</span></SelectItem>)}</SelectContent></Select></div></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="sale-price">Preço de venda</Label><Input id="sale-price" name="sale_price" type="number" step="0.01" min="0" defaultValue={product?.sale_price ?? ""} required /></div><div className="space-y-2"><Label htmlFor="cost-price">Preço de custo</Label><Input id="cost-price" name="cost_price" type="number" step="0.01" min="0" defaultValue={product?.cost_price ?? ""} /></div></div>
+          {!product && <><div className="space-y-2"><Label>Geladeira</Label><Select name="fridge_id" defaultValue={String(data?.fridges[0]?.id ?? "")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{data?.fridges.map((fridge) => <SelectItem key={fridge.id} value={String(fridge.id)}>{fridge.name}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="initial-stock">Estoque inicial</Label><Input id="initial-stock" name="initial_stock" type="number" min="0" defaultValue="0" /></div><div className="space-y-2"><Label htmlFor="min-stock">Estoque mínimo</Label><Input id="min-stock" name="min_quantity" type="number" min="0" defaultValue={inventory?.min_quantity ?? 5} /></div></div></>}
+          <div className="flex items-center justify-between rounded-lg border p-3"><Label htmlFor="product-active">Produto ativo</Label><Switch id="product-active" name="active" defaultChecked={product?.active ?? true} /></div>
+          <DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar produto"}</Button></DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function StockDialog({ product, data, session, onClose, onSaved }: { product: Product | null; data: ProductsData | null; session: Session; onClose: () => void; onSaved: () => void }) {
@@ -302,6 +448,26 @@ function EmployeeDialog({ openValue, data, session, onClose, onSaved }: { openVa
   const [busy, setBusy] = useState(false);
   async function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); setBusy(true); try { await sisbarApi("employee_upsert", { id: employee?.id, full_name: form.get("full_name"), enrollment: form.get("enrollment"), department_id: Number(form.get("department_id")), extension: form.get("extension"), phone: form.get("phone"), pin: form.get("pin"), active: form.get("active") === "on" }, session.token); toast.success(employee ? "Funcionário atualizado." : "Funcionário cadastrado."); onSaved(); } catch (error) { toast.error(errorMessage(error)); } finally { setBusy(false); } }
   return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{employee ? "Editar funcionário" : "Novo funcionário"}</DialogTitle><DialogDescription>Dados usados para identificação e cobrança.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="employee-name">Nome completo</Label><Input id="employee-name" name="full_name" defaultValue={employee?.full_name ?? ""} required /></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="employee-enrollment">Matrícula</Label><Input id="employee-enrollment" name="enrollment" defaultValue={employee?.enrollment ?? ""} required /></div><div className="space-y-2"><Label>Setor</Label><Select name="department_id" defaultValue={String(employee?.department_id ?? data?.departments[0]?.id ?? "")}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{data?.departments.filter((department) => department.active !== false).map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="employee-extension">Ramal</Label><Input id="employee-extension" name="extension" defaultValue={employee?.extension ?? ""} /></div><div className="space-y-2"><Label htmlFor="employee-phone">WhatsApp</Label><Input id="employee-phone" name="phone" defaultValue={employee?.phone ?? ""} /></div></div><div className="space-y-2"><Label htmlFor="employee-pin">{employee ? "Novo PIN (opcional)" : "PIN inicial"}</Label><Input id="employee-pin" name="pin" type="password" inputMode="numeric" minLength={4} maxLength={8} required={!employee} /><p className="text-xs text-slate-500">De 4 a 8 números.</p></div><div className="flex items-center justify-between rounded-lg border p-3"><Label htmlFor="employee-active">Funcionário ativo</Label><Switch id="employee-active" name="active" defaultChecked={employee?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar funcionário"}</Button></DialogFooter></form></DialogContent></Dialog>;
+}
+
+function DepartmentDialog({ openValue, session, onClose, onSaved }: { openValue: Department | null | "new"; session: Session; onClose: () => void; onSaved: () => void }) {
+  const department = openValue === "new" ? null : openValue;
+  const [busy, setBusy] = useState(false);
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setBusy(true);
+    try {
+      await sisbarApi("department_upsert", { id: department?.id, name: form.get("name"), active: form.get("active") === "on" }, session.token);
+      toast.success(department ? "Setor atualizado." : "Setor cadastrado.");
+      onSaved();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent><DialogHeader><DialogTitle>{department ? "Editar setor" : "Novo setor"}</DialogTitle><DialogDescription>O setor ficará disponível no cadastro e na edição de funcionários.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="department-name">Nome do setor</Label><Input id="department-name" name="name" defaultValue={department?.name ?? ""} placeholder="Ex.: Financeiro" maxLength={80} required /></div><div className="flex items-center justify-between rounded-lg border p-3"><div><Label htmlFor="department-active">Setor ativo</Label><p className="mt-1 text-xs text-slate-500">Setores inativos não aparecem em novos cadastros.</p></div><Switch id="department-active" name="active" defaultChecked={department?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar setor"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 function PaymentDialog({ employee, session, onClose, onSaved }: { employee: Employee | null; session: Session; onClose: () => void; onSaved: () => void }) {
