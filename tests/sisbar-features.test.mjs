@@ -18,6 +18,28 @@ test("admin includes sale cancellation, departments and product images", async (
   assert.match(admin, /item\.product_name/);
 });
 
+test("admin mobile navigation and sales status filters stay available", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  assert.match(admin, /Abrir menu do painel/);
+  assert.match(admin, /Navegação do painel/);
+  assert.match(admin, /SheetContent side="left"/);
+  assert.match(admin, /label: "Pendentes"/);
+  assert.match(admin, /label: "Confirmadas"/);
+  assert.match(admin, /label: "Canceladas"/);
+  assert.match(admin, /\["pending", "partial"\]\.includes/);
+});
+
+test("mobile views use bounded layouts and dedicated compact records", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  const store = await source("app/employee-store.tsx");
+  assert.match(admin, /overflow-x-hidden/);
+  assert.match(admin, /md:hidden/);
+  assert.match(admin, /min-w-\[760px\]/);
+  assert.match(store, /overflow-x-hidden/);
+  assert.match(store, /safe-area-inset-bottom/);
+  assert.match(store, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
+});
+
 test("edge API protects cancellation and image uploads", async () => {
   const api = await source("supabase/functions/sisbar-api/index.ts");
   assert.match(api, /requireAdmin\(req\)/);
