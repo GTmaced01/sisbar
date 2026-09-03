@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { AdminManualSale } from "@/components/admin-manual-sale";
 import { PwaBootstrap } from "@/components/pwa-bootstrap";
 import "./globals.css";
 
@@ -36,7 +37,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className="antialiased"><PwaBootstrap />{children}</body>
+      <body className="antialiased"><PwaBootstrap /><AdminManualSale />{children}</body>
     </html>
   );
 }
