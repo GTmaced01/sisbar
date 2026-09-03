@@ -28,21 +28,9 @@ create table public.fridges (
   unique (company_id, id)
 );
 
-create table public.departments (
-  id bigint generated always as identity primary key,
-  company_id bigint not null references public.companies(id) on delete restrict,
-  name text not null check (char_length(name) between 2 and 80),
-  active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (company_id, name),
-  unique (company_id, id)
-);
-
 create table public.accounts (
   id bigint generated always as identity primary key,
   company_id bigint not null references public.companies(id) on delete restrict,
-  department_id bigint,
   role text not null default 'employee' check (role in ('admin', 'employee')),
   enrollment text not null check (char_length(enrollment) between 2 and 40),
   full_name text not null check (char_length(full_name) between 2 and 140),
@@ -57,11 +45,7 @@ create table public.accounts (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (company_id, enrollment),
-  unique (company_id, id),
-  constraint accounts_department_company_fk
-    foreign key (company_id, department_id)
-    references public.departments(company_id, id)
-    on delete restrict
+  unique (company_id, id)
 );
 
 create table public.user_sessions (
@@ -216,9 +200,6 @@ create table public.audit_logs (
 );
 
 create index fridges_company_active_idx on public.fridges (company_id, active);
-create index departments_company_active_idx on public.departments (company_id, active);
-create index accounts_department_id_idx on public.accounts (department_id);
-create index accounts_company_department_idx on public.accounts (company_id, department_id);
 create index accounts_company_role_active_idx on public.accounts (company_id, role, active);
 create index user_sessions_account_id_idx on public.user_sessions (account_id);
 create index user_sessions_company_expires_idx on public.user_sessions (company_id, expires_at)
@@ -266,8 +247,6 @@ $$;
 create trigger companies_set_updated_at before update on public.companies
 for each row execute function public.set_updated_at();
 create trigger fridges_set_updated_at before update on public.fridges
-for each row execute function public.set_updated_at();
-create trigger departments_set_updated_at before update on public.departments
 for each row execute function public.set_updated_at();
 create trigger accounts_set_updated_at before update on public.accounts
 for each row execute function public.set_updated_at();
@@ -748,7 +727,6 @@ on conflict (id) do update set
 
 alter table public.companies enable row level security;
 alter table public.fridges enable row level security;
-alter table public.departments enable row level security;
 alter table public.accounts enable row level security;
 alter table public.user_sessions enable row level security;
 alter table public.products enable row level security;

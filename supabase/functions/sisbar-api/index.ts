@@ -6,7 +6,6 @@ type SessionContext = {
   account: {
     id: number;
     company_id: number;
-    department_id: number | null;
     role: "admin" | "employee";
     enrollment: string;
     full_name: string;
@@ -228,10 +227,9 @@ async function catalog(body: Json) {
     .maybeSingle();
   if (!fridge) return fail(404, "fridge_not_found", "Geladeira não encontrada.");
 
-  const [{ data: products }, { data: inventory }, { data: departments }] = await Promise.all([
+  const [{ data: products }, { data: inventory }] = await Promise.all([
     db.from("products").select("id, sku, name, description, category, sale_price, image_url").eq("company_id", company.id).eq("active", true).order("name"),
     db.from("inventory").select("product_id, quantity, min_quantity").eq("company_id", company.id).eq("fridge_id", fridge.id),
-    db.from("departments").select("id, name").eq("company_id", company.id).eq("active", true).order("name"),
   ]);
 
   const inventoryMap = new Map((inventory ?? []).map((item) => [Number(item.product_id), item]));
@@ -253,7 +251,6 @@ async function catalog(body: Json) {
         registration_enabled: company.employee_registration_enabled,
       },
       fridge,
-      departments: departments ?? [],
       products: availableProducts,
     },
   });
@@ -269,29 +266,18 @@ async function registerEmployee(body: Json) {
   const fullName = text(body.full_name, 140);
   const enrollment = normalizeEnrollment(body.enrollment);
   const pin = validPin(body.pin);
-  const departmentId = numericId(body.department_id);
   const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
   const extension = text(body.extension, 20) || null;
   const phone = digits(body.phone) || null;
 
-  if (fullName.length < 2 || enrollment.length < 2 || !pin || !departmentId || organizationUnit.length < 2) {
-    return fail(400, "invalid_registration", "Preencha nome, matrícula, setor, OM e um PIN de 4 a 8 números.");
+  if (fullName.length < 2 || enrollment.length < 2 || !pin || organizationUnit.length < 2) {
+    return fail(400, "invalid_registration", "Preencha nome, matrícula, OM e um PIN de 4 a 8 números.");
   }
-
-  const { data: department } = await db
-    .from("departments")
-    .select("id")
-    .eq("id", departmentId)
-    .eq("company_id", company.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (!department) return fail(400, "invalid_department", "Setor inválido.");
 
   try {
     const pinHash = await hashPin(pin);
     const { data: account, error } = await db.from("accounts").insert({
       company_id: company.id,
-      department_id: departmentId,
       role: "employee",
       enrollment,
       full_name: fullName,
@@ -370,7 +356,6 @@ async function login(body: Json) {
         role: account.role,
         enrollment: account.enrollment,
         full_name: account.full_name,
-        department_id: account.department_id,
         organization_unit: account.organization_unit,
         extension: account.extension,
         phone: account.phone,
@@ -413,24 +398,19 @@ async function profileUpdate(req: Request, body: Json) {
   if (session.account.role !== "employee") return fail(403, "employee_required", "Este perfil não pode ser alterado por esta tela.");
 
   const fullName = text(body.full_name, 140).replace(/\s+/g, " ");
-  const departmentId = numericId(body.department_id);
   const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
   const extension = text(body.extension, 20) || null;
   const phone = digits(body.phone) || null;
-  if (fullName.length < 2 || !departmentId || organizationUnit.length < 2) {
-    return fail(400, "invalid_profile", "Preencha nome, setor e OM.");
+  if (fullName.length < 2 || organizationUnit.length < 2) {
+    return fail(400, "invalid_profile", "Preencha nome e OM.");
   }
-
-  const { data: department } = await db.from("departments").select("id").eq("id", departmentId).eq("company_id", session.company.id).eq("active", true).maybeSingle();
-  if (!department) return fail(400, "invalid_department", "Setor inválido.");
 
   const { data: account, error } = await db.from("accounts").update({
     full_name: fullName,
-    department_id: departmentId,
     organization_unit: organizationUnit,
     extension,
     phone,
-  }).eq("id", session.account.id).eq("company_id", session.company.id).eq("role", "employee").select("id, role, enrollment, full_name, department_id, organization_unit, extension, phone, must_change_pin").maybeSingle();
+  }).eq("id", session.account.id).eq("company_id", session.company.id).eq("role", "employee").select("id, role, enrollment, full_name, organization_unit, extension, phone, must_change_pin").maybeSingle();
   if (error || !account) return fail(500, "profile_failed", "Não foi possível atualizar seus dados.");
 
   await db.from("audit_logs").insert({
@@ -501,7 +481,7 @@ async function loadSales(companyId: number, limit = 100, start?: string, end?: s
   const saleIds = saleRows.map((sale) => Number(sale.id));
   const [{ data: employees }, { data: items }] = await Promise.all([
     employeeIds.length
-      ? db.from("accounts").select("id, full_name, enrollment, extension, phone, department_id").in("id", employeeIds)
+      ? db.from("accounts").select("id, full_name, enrollment, organization_unit, extension, phone").in("id", employeeIds)
       : Promise.resolve({ data: [] }),
     saleIds.length
       ? db.from("sale_items").select("sale_id, product_id, product_name, unit_price, quantity, subtotal").in("sale_id", saleIds)
@@ -662,9 +642,8 @@ async function stockAdjust(req: Request, body: Json) {
 
 async function employeesList(req: Request) {
   const session = await requireAdmin(req);
-  const [{ data: employees }, { data: departments }, { data: openSales }] = await Promise.all([
-    db.from("accounts").select("id, department_id, enrollment, full_name, organization_unit, extension, phone, active, created_at").eq("company_id", session.company.id).eq("role", "employee").order("full_name"),
-    db.from("departments").select("id, name, active").eq("company_id", session.company.id).order("name"),
+  const [{ data: employees }, { data: openSales }] = await Promise.all([
+    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone, active, created_at").eq("company_id", session.company.id).eq("role", "employee").order("full_name"),
     db.from("sales").select("employee_id, total, amount_paid, sold_at").eq("company_id", session.company.id).in("payment_status", ["pending", "partial"]),
   ]);
   const balances = new Map<number, { balance: number; openSales: number; lastPurchase: string | null }>();
@@ -676,52 +655,13 @@ async function employeesList(req: Request) {
     if (!current.lastPurchase || String(sale.sold_at) > current.lastPurchase) current.lastPurchase = String(sale.sold_at);
     balances.set(key, current);
   }
-  const departmentMap = new Map((departments ?? []).map((department) => [Number(department.id), department.name]));
   const rows = (employees ?? []).map((employee) => ({
     ...employee,
-    department_name: departmentMap.get(Number(employee.department_id)) ?? "Sem setor",
     balance: money(balances.get(Number(employee.id))?.balance ?? 0),
     open_sales: balances.get(Number(employee.id))?.openSales ?? 0,
     last_purchase: balances.get(Number(employee.id))?.lastPurchase ?? null,
   }));
-  return respond(200, { ok: true, data: { employees: rows, departments: departments ?? [] } });
-}
-
-async function departmentsList(req: Request) {
-  const session = await requireAdmin(req);
-  const [{ data: departments }, { data: employees }] = await Promise.all([
-    db.from("departments").select("id, name, active, created_at").eq("company_id", session.company.id).order("name"),
-    db.from("accounts").select("id, department_id").eq("company_id", session.company.id).eq("role", "employee"),
-  ]);
-  const counts = new Map<number, number>();
-  for (const employee of employees ?? []) {
-    const departmentId = Number(employee.department_id);
-    if (departmentId) counts.set(departmentId, (counts.get(departmentId) ?? 0) + 1);
-  }
-  return respond(200, { ok: true, data: { departments: (departments ?? []).map((department) => ({ ...department, employee_count: counts.get(Number(department.id)) ?? 0 })) } });
-}
-
-async function departmentUpsert(req: Request, body: Json) {
-  const session = await requireAdmin(req);
-  const id = numericId(body.id);
-  const name = text(body.name, 80).replace(/\s+/g, " ");
-  const active = body.active !== false;
-  if (name.length < 2) return fail(400, "invalid_department", "Informe um nome de setor com pelo menos 2 caracteres.");
-
-  let result;
-  if (id) {
-    const { data, error } = await db.from("departments").update({ name, active }).eq("id", id).eq("company_id", session.company.id).select("id, name, active").maybeSingle();
-    if (error?.code === "23505") return fail(409, "department_exists", "Já existe um setor com esse nome.");
-    if (error || !data) return fail(404, "department_not_found", "Setor não encontrado.");
-    result = data;
-  } else {
-    const { data, error } = await db.from("departments").insert({ company_id: session.company.id, name, active }).select("id, name, active").single();
-    if (error?.code === "23505") return fail(409, "department_exists", "Já existe um setor com esse nome.");
-    if (error || !data) return fail(500, "department_failed", "Não foi possível cadastrar o setor.");
-    result = data;
-  }
-  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: id ? "department_updated" : "department_created", entity_type: "department", entity_id: String(result.id), metadata: { name, active } });
-  return respond(id ? 200 : 201, { ok: true, data: result });
+  return respond(200, { ok: true, data: { employees: rows } });
 }
 
 async function employeeUpsert(req: Request, body: Json) {
@@ -729,19 +669,16 @@ async function employeeUpsert(req: Request, body: Json) {
   const id = numericId(body.id);
   const enrollment = normalizeEnrollment(body.enrollment);
   const fullName = text(body.full_name, 140);
-  const departmentId = numericId(body.department_id);
   const organizationUnit = text(body.organization_unit, 100).replace(/\s+/g, " ");
   const extension = text(body.extension, 20) || null;
   const phone = digits(body.phone) || null;
   const pin = body.pin ? validPin(body.pin) : null;
   const active = body.active !== false;
-  if (!enrollment || fullName.length < 2 || !departmentId || organizationUnit.length < 2 || (!id && !pin)) {
-    return fail(400, "invalid_employee", "Preencha nome, matrícula, setor, OM e PIN inicial.");
+  if (!enrollment || fullName.length < 2 || organizationUnit.length < 2 || (!id && !pin)) {
+    return fail(400, "invalid_employee", "Preencha nome, matrícula, OM e PIN inicial.");
   }
-  const { data: department } = await db.from("departments").select("id").eq("id", departmentId).eq("company_id", session.company.id).maybeSingle();
-  if (!department) return fail(400, "invalid_department", "Setor inválido.");
 
-  const values: Json = { enrollment, full_name: fullName, department_id: departmentId, organization_unit: organizationUnit, extension, phone, active };
+  const values: Json = { enrollment, full_name: fullName, organization_unit: organizationUnit, extension, phone, active };
   if (pin) values.pin_hash = await hashPin(pin);
   let result;
   if (id) {
@@ -790,16 +727,14 @@ async function saleCancel(req: Request, body: Json) {
 
 async function receivables(req: Request) {
   const session = await requireAdmin(req);
-  const [{ data: employees }, { data: departments }, sales] = await Promise.all([
-    db.from("accounts").select("id, department_id, enrollment, full_name, organization_unit, extension, phone").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
-    db.from("departments").select("id, name").eq("company_id", session.company.id),
+  const [{ data: employees }, sales] = await Promise.all([
+    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
     loadSales(session.company.id, 5000),
   ]);
-  const departmentMap = new Map((departments ?? []).map((department) => [Number(department.id), department.name]));
   const open = sales.filter((sale) => ["pending", "partial"].includes(String(sale.payment_status)));
   const grouped = new Map<number, Json>();
   for (const employee of employees ?? []) {
-    grouped.set(Number(employee.id), { ...employee, department_name: departmentMap.get(Number(employee.department_id)) ?? "Sem setor", balance: 0, open_sales: 0, sales: [] });
+    grouped.set(Number(employee.id), { ...employee, balance: 0, open_sales: 0, sales: [] });
   }
   for (const sale of open) {
     const row = grouped.get(Number(sale.employee_id));
@@ -917,8 +852,6 @@ Deno.serve(async (req: Request) => {
       case "product_upsert": return await productUpsert(req, body);
       case "stock_adjust": return await stockAdjust(req, body);
       case "employees_list": return await employeesList(req);
-      case "departments_list": return await departmentsList(req);
-      case "department_upsert": return await departmentUpsert(req, body);
       case "employee_upsert": return await employeeUpsert(req, body);
       case "sales_list": return await salesList(req);
       case "sale_cancel": return await saleCancel(req, body);

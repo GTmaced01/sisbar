@@ -27,6 +27,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { PwaInstallButton } from "@/components/pwa-install-button";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +45,6 @@ import {
   Company,
   DEFAULT_COMPANY,
   DEFAULT_FRIDGE,
-  Department,
   Fridge,
   Product,
   readSession,
@@ -55,7 +55,7 @@ import {
   sisbarApi,
 } from "@/lib/sisbar";
 
-type Catalog = { company: Company; fridge: Fridge; departments: Department[]; products: Product[] };
+type Catalog = { company: Company; fridge: Fridge; products: Product[] };
 type History = { balance: number; sales: Sale[] };
 type Receipt = { sale_id: number; public_id: string; total: number; payment_status: string };
 
@@ -210,6 +210,7 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             </span>
           </button>
           <div className="flex items-center gap-1 sm:gap-2">
+            <PwaInstallButton />
             <Button variant="ghost" size="sm" onClick={() => void openHistory()}>
               <ReceiptText /> <span className="hidden sm:inline">Meu extrato</span>
             </Button>
@@ -266,8 +267,8 @@ export function EmployeeStore({ onOpenAdmin }: { onOpenAdmin: () => void }) {
         </div>
       )}
 
-      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} companySlug={companySlug} departments={catalog.departments} registrationEnabled={catalog.company.registration_enabled !== false} onAuthenticated={handleAuthenticated} />
-      {session && <ProfileDialog key={`${session.account.id}:${session.account.organization_unit ?? ""}:${profileOpen}`} open={profileOpen} onOpenChange={setProfileOpen} departments={catalog.departments} session={session} onUpdated={(account) => {
+      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} companySlug={companySlug} registrationEnabled={catalog.company.registration_enabled !== false} onAuthenticated={handleAuthenticated} />
+      {session && <ProfileDialog key={`${session.account.id}:${session.account.organization_unit ?? ""}:${profileOpen}`} open={profileOpen} onOpenChange={setProfileOpen} session={session} onUpdated={(account) => {
         const nextSession = { ...session, account };
         saveSession(EMPLOYEE_SESSION, nextSession);
         setSession(nextSession);
@@ -376,7 +377,7 @@ function CartPanel({ items, total, onChange, onCheckout }: { items: Array<{ prod
   );
 }
 
-function AuthDialog({ open, onOpenChange, companySlug, departments, registrationEnabled, onAuthenticated }: { open: boolean; onOpenChange: (open: boolean) => void; companySlug: string; departments: Department[]; registrationEnabled: boolean; onAuthenticated: (session: Session) => void }) {
+function AuthDialog({ open, onOpenChange, companySlug, registrationEnabled, onAuthenticated }: { open: boolean; onOpenChange: (open: boolean) => void; companySlug: string; registrationEnabled: boolean; onAuthenticated: (session: Session) => void }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [busy, setBusy] = useState(false);
   const [enrollment, setEnrollment] = useState("");
@@ -399,7 +400,6 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
         company_slug: companySlug,
         full_name: form.get("full_name"),
         enrollment: form.get("enrollment"),
-        department_id: Number(form.get("department_id")),
         organization_unit: organizationUnit === OTHER_ORGANIZATION_UNIT ? form.get("organization_unit_other") : organizationUnit,
         extension: form.get("extension"),
         phone: form.get("phone"),
@@ -429,10 +429,7 @@ function AuthDialog({ open, onOpenChange, companySlug, departments, registration
         ) : (
           <form onSubmit={submitRegister} className="space-y-4">
             <div className="space-y-2"><Label htmlFor="full-name">Nome completo</Label><Input id="full-name" name="full_name" required /></div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2"><Label htmlFor="register-enrollment">Matrícula</Label><Input id="register-enrollment" name="enrollment" required /></div>
-              <div className="space-y-2"><Label>Setor</Label><Select name="department_id" required><SelectTrigger className="w-full"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{departments.map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div>
-            </div>
+            <div className="space-y-2"><Label htmlFor="register-enrollment">Matrícula</Label><Input id="register-enrollment" name="enrollment" required /></div>
             <OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="register" />
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2"><Label htmlFor="extension">Ramal</Label><Input id="extension" name="extension" /></div>
@@ -471,7 +468,7 @@ function OrganizationUnitFields({ value, onValueChange, idPrefix, customDefaultV
   );
 }
 
-function ProfileDialog({ open, onOpenChange, departments, session, onUpdated }: { open: boolean; onOpenChange: (open: boolean) => void; departments: Department[]; session: Session; onUpdated: (account: Account) => void }) {
+function ProfileDialog({ open, onOpenChange, session, onUpdated }: { open: boolean; onOpenChange: (open: boolean) => void; session: Session; onUpdated: (account: Account) => void }) {
   const currentOrganizationUnit = session.account.organization_unit ?? "";
   const isStandardUnit = STANDARD_ORGANIZATION_UNITS.some((unit) => unit === currentOrganizationUnit);
   const [organizationUnit, setOrganizationUnit] = useState(isStandardUnit ? currentOrganizationUnit : currentOrganizationUnit ? OTHER_ORGANIZATION_UNIT : "");
@@ -484,7 +481,6 @@ function ProfileDialog({ open, onOpenChange, departments, session, onUpdated }: 
     try {
       const account = await sisbarApi<Account>("profile_update", {
         full_name: form.get("full_name"),
-        department_id: Number(form.get("department_id")),
         organization_unit: organizationUnit === OTHER_ORGANIZATION_UNIT ? form.get("organization_unit_other") : organizationUnit,
         extension: form.get("extension"),
         phone: form.get("phone"),
@@ -505,10 +501,7 @@ function ProfileDialog({ open, onOpenChange, departments, session, onUpdated }: 
         <DialogHeader><DialogTitle>Meus dados</DialogTitle><DialogDescription>Atualize suas informações de identificação e contato.</DialogDescription></DialogHeader>
         <form className="space-y-4" onSubmit={save}>
           <div className="space-y-2"><Label htmlFor="profile-name">Nome completo</Label><Input id="profile-name" name="full_name" defaultValue={session.account.full_name} required /></div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-2"><Label htmlFor="profile-enrollment">Matrícula</Label><Input id="profile-enrollment" value={session.account.enrollment} readOnly className="bg-slate-50" /><p className="text-xs text-slate-500">A matrícula de acesso não é alterada aqui.</p></div>
-            <div className="space-y-2"><Label>Setor</Label><Select name="department_id" defaultValue={String(session.account.department_id ?? "")} required><SelectTrigger className="w-full"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{departments.map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div>
-          </div>
+          <div className="space-y-2"><Label htmlFor="profile-enrollment">Matrícula</Label><Input id="profile-enrollment" value={session.account.enrollment} readOnly className="bg-slate-50" /><p className="text-xs text-slate-500">A matrícula de acesso não é alterada aqui.</p></div>
           <OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="profile" customDefaultValue={isStandardUnit ? "" : currentOrganizationUnit} />
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2"><Label htmlFor="profile-extension">Ramal</Label><Input id="profile-extension" name="extension" defaultValue={session.account.extension ?? ""} /></div>

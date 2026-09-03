@@ -3,7 +3,6 @@ export const SISBAR_PUBLISHABLE_KEY = "sb_publishable_fMLdgCQW54kCRJ_JMpX9kg_GJ8
 export const DEFAULT_COMPANY = "empresa-modelo";
 export const DEFAULT_FRIDGE = "principal";
 
-export type Department = { id: number; name: string; active?: boolean };
 export type Company = {
   id?: number;
   slug: string;
@@ -34,7 +33,6 @@ export type Account = {
   role: "admin" | "employee";
   enrollment: string;
   full_name: string;
-  department_id?: number | null;
   organization_unit?: string | null;
   extension?: string | null;
   phone?: string | null;
@@ -53,14 +51,12 @@ export type Sale = {
   sold_at: string;
   paid_at?: string | null;
   payment_method?: string | null;
-  employee?: Pick<Account, "full_name" | "enrollment" | "extension" | "phone" | "department_id">;
+  employee?: Pick<Account, "full_name" | "enrollment" | "extension" | "phone" | "organization_unit">;
   items: SaleItem[];
   sale_items?: SaleItem[];
 };
 export type Employee = {
   id: number;
-  department_id: number;
-  department_name: string;
   organization_unit?: string | null;
   enrollment: string;
   full_name: string;

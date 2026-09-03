@@ -8,7 +8,6 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
-  Building2,
   Boxes,
   CheckCircle2,
   ChevronRight,
@@ -74,7 +73,6 @@ import {
   Company,
   csvDownload,
   DEFAULT_COMPANY,
-  Department,
   digitsOnly,
   Employee,
   Fridge,
@@ -87,11 +85,10 @@ import {
   sisbarApi,
 } from "@/lib/sisbar";
 
-type AdminView = "dashboard" | "sales" | "receivables" | "products" | "employees" | "departments" | "report" | "settings";
+type AdminView = "dashboard" | "sales" | "receivables" | "products" | "employees" | "report" | "settings";
 type DashboardData = { metrics: { sold: number; received: number; receivable: number; low_stock: number; employees: number }; recent_sales: Sale[] };
 type ProductsData = { products: Product[]; fridges: Fridge[] };
-type EmployeesData = { employees: Employee[]; departments: Department[] };
-type DepartmentsData = { departments: Array<Department & { employee_count: number }> };
+type EmployeesData = { employees: Employee[] };
 type ReceivablesData = { receivables: Employee[]; total: number };
 type ReportData = {
   month: string;
@@ -110,7 +107,6 @@ const navigation: Array<{ id: AdminView; label: string; icon: typeof LayoutDashb
   { id: "receivables", label: "Contas a receber", icon: CircleDollarSign },
   { id: "products", label: "Produtos e estoque", icon: Boxes },
   { id: "employees", label: "Usuários", icon: Users },
-  { id: "departments", label: "Setores", icon: Building2 },
   { id: "report", label: "Relatório mensal", icon: FileBarChart },
   { id: "settings", label: "QR e configurações", icon: Settings },
 ];
@@ -184,13 +180,11 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
   const [sales, setSales] = useState<Sale[]>([]);
   const [productsData, setProductsData] = useState<ProductsData | null>(null);
   const [employeesData, setEmployeesData] = useState<EmployeesData | null>(null);
-  const [departmentsData, setDepartmentsData] = useState<DepartmentsData | null>(null);
   const [receivablesData, setReceivablesData] = useState<ReceivablesData | null>(null);
   const [report, setReport] = useState<ReportData | null>(null);
   const [productDialog, setProductDialog] = useState<Product | null | "new">(null);
   const [stockProduct, setStockProduct] = useState<Product | null>(null);
   const [employeeDialog, setEmployeeDialog] = useState<Employee | null | "new">(null);
-  const [departmentDialog, setDepartmentDialog] = useState<Department | null | "new">(null);
   const [paymentEmployee, setPaymentEmployee] = useState<Employee | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -203,7 +197,6 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
       if (target === "sales") setSales((await sisbarApi<{ sales: Sale[] }>("sales_list", {}, activeSession.token)).sales);
       if (target === "products") setProductsData(await sisbarApi<ProductsData>("products_list", {}, activeSession.token));
       if (target === "employees") setEmployeesData(await sisbarApi<EmployeesData>("employees_list", {}, activeSession.token));
-      if (target === "departments") setDepartmentsData(await sisbarApi<DepartmentsData>("departments_list", {}, activeSession.token));
       if (target === "receivables") setReceivablesData(await sisbarApi<ReceivablesData>("receivables", {}, activeSession.token));
     } catch (error) {
       toast.error(errorMessage(error));
@@ -279,7 +272,6 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
           {view === "receivables" && <ReceivablesSection data={receivablesData} onPay={setPaymentEmployee} company={session.company} />}
           {view === "products" && <ProductsSection data={productsData} onNew={() => setProductDialog("new")} onEdit={setProductDialog} onStock={setStockProduct} />}
           {view === "employees" && <EmployeesSection data={employeesData} onNew={() => setEmployeeDialog("new")} onEdit={setEmployeeDialog} />}
-          {view === "departments" && <DepartmentsSection data={departmentsData} onNew={() => setDepartmentDialog("new")} onEdit={setDepartmentDialog} />}
           {view === "report" && <ReportSection report={report} onReport={setReport} session={session} />}
           {view === "settings" && <SettingsSection session={session} companySlug={companySlug} onSessionChange={(next) => { saveSession(ADMIN_SESSION, next); setSession(next); }} />}
         </main>
@@ -287,8 +279,7 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
 
       <ProductDialog key={productDialog === "new" ? "new" : productDialog?.id ?? "closed"} openValue={productDialog} data={productsData} session={session} onClose={() => setProductDialog(null)} onSaved={() => { setProductDialog(null); void refreshRelated(); }} />
       <StockDialog product={stockProduct} data={productsData} session={session} onClose={() => setStockProduct(null)} onSaved={() => { setStockProduct(null); void refreshRelated(); }} />
-      <EmployeeDialog key={employeeDialog === "new" ? "new" : employeeDialog?.id ?? "closed"} openValue={employeeDialog} data={employeesData} session={session} onClose={() => setEmployeeDialog(null)} onSaved={() => { setEmployeeDialog(null); void refreshRelated(); }} />
-      <DepartmentDialog openValue={departmentDialog} session={session} onClose={() => setDepartmentDialog(null)} onSaved={() => { setDepartmentDialog(null); void refreshRelated(); }} />
+      <EmployeeDialog key={employeeDialog === "new" ? "new" : employeeDialog?.id ?? "closed"} openValue={employeeDialog} session={session} onClose={() => setEmployeeDialog(null)} onSaved={() => { setEmployeeDialog(null); void refreshRelated(); }} />
       <PaymentDialog employee={paymentEmployee} session={session} onClose={() => setPaymentEmployee(null)} onSaved={() => { setPaymentEmployee(null); void refreshRelated(); }} />
       <ChangePinDialog session={session} required={session.account.must_change_pin === true} onChanged={() => { const next = { ...session, account: { ...session.account, must_change_pin: false } }; saveSession(ADMIN_SESSION, next); setSession(next); }} />
     </div>
@@ -404,7 +395,7 @@ function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | 
     const message = `Olá, ${employee.full_name.split(" ")[0]}! Segue seu extrato do ${company.name}:\n${due}\n\nSaldo em aberto: *${brl.format(employee.balance)}*.${company.pix_key ? `\nChave Pix: ${company.pix_key}` : ""}\nObrigado!`;
     window.open(`https://wa.me/55${digitsOnly(employee.phone)}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   }
-  return <><SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Saldos em aberto agrupados por usuário." /><Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card><div className="space-y-3">{data?.receivables.length ? data.receivables.map((employee) => <Card key={employee.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:flex sm:items-center sm:gap-4 sm:p-5"><div className="flex min-w-0 items-center gap-3 sm:flex-1"><div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 text-xs leading-5 text-slate-500">{employee.department_name}{employee.organization_unit ? ` · ${employee.organization_unit}` : ""} · Matrícula {employee.enrollment} · {employee.open_sales} {employee.open_sales === 1 ? "venda" : "vendas"}</p></div></div><div className="mt-4 flex items-end justify-between gap-3 sm:mt-0 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div><div className="mt-4 grid grid-cols-2 gap-2 sm:mt-0 sm:flex"><Button variant="outline" size="sm" className="w-full" onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="w-full bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div></CardContent></Card>) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}</div></>;
+  return <><SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Saldos em aberto agrupados por usuário." /><Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card><div className="space-y-3">{data?.receivables.length ? data.receivables.map((employee) => <Card key={employee.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:flex sm:items-center sm:gap-4 sm:p-5"><div className="flex min-w-0 items-center gap-3 sm:flex-1"><div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 text-xs leading-5 text-slate-500">OM {employee.organization_unit || "Não informada"} · Matrícula {employee.enrollment} · {employee.open_sales} {employee.open_sales === 1 ? "venda" : "vendas"}</p></div></div><div className="mt-4 flex items-end justify-between gap-3 sm:mt-0 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div><div className="mt-4 grid grid-cols-2 gap-2 sm:mt-0 sm:flex"><Button variant="outline" size="sm" className="w-full" onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="w-full bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div></CardContent></Card>) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}</div></>;
 }
 
 function ProductsSection({ data, onNew, onEdit, onStock }: { data: ProductsData | null; onNew: () => void; onEdit: (product: Product) => void; onStock: (product: Product) => void }) {
@@ -412,18 +403,7 @@ function ProductsSection({ data, onNew, onEdit, onStock }: { data: ProductsData 
 }
 
 function EmployeesSection({ data, onNew, onEdit }: { data: EmployeesData | null; onNew: () => void; onEdit: (employee: Employee) => void }) {
-  return <><SectionTitle eyebrow="Equipe" title="Usuários" description="Gerencie identificação, setor, ramal e acesso." action={<Button className="w-full bg-[#ef7d22] hover:bg-[#d86d18] sm:w-auto" onClick={onNew}><UserPlus /> Novo usuário</Button>} /><Card className="min-w-0 gap-0 overflow-hidden border-slate-200 py-0 shadow-none"><CardContent className="p-0"><div className="divide-y divide-slate-100 md:hidden">{data?.employees.map((employee) => <article key={employee.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 text-xs text-slate-500">Matrícula {employee.enrollment}</p></div><Badge variant="secondary" className={employee.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{employee.active ? "Ativo" : "Inativo"}</Badge></div><div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-sm"><div className="min-w-0"><p className="text-xs text-slate-500">Setor</p><p className="mt-0.5 truncate font-medium">{employee.department_name}</p></div><div className="min-w-0"><p className="text-xs text-slate-500">OM</p><p className="mt-0.5 truncate font-medium">{employee.organization_unit || "Não informada"}</p></div><div className="min-w-0"><p className="text-xs text-slate-500">Saldo</p><p className="mt-0.5 truncate font-medium">{brl.format(employee.balance)}</p></div><div className="col-span-2"><p className="text-xs text-slate-500">Contato</p><p className="mt-0.5 font-medium">{employee.extension ? `Ramal ${employee.extension}` : employee.phone || "Não informado"}</p></div></div><Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => onEdit(employee)}><Pencil /> Editar usuário</Button></article>)}</div><div className="hidden md:block"><Table className="min-w-[760px]"><TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Setor</TableHead><TableHead>OM</TableHead><TableHead>Contato</TableHead><TableHead>Saldo</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader><TableBody>{data?.employees.map((employee) => <TableRow key={employee.id}><TableCell><p className="font-medium">{employee.full_name}</p><p className="text-xs text-slate-500">Matrícula {employee.enrollment}</p></TableCell><TableCell>{employee.department_name}</TableCell><TableCell>{employee.organization_unit || "—"}</TableCell><TableCell className="text-slate-600">{employee.extension ? `Ramal ${employee.extension}` : employee.phone || "—"}</TableCell><TableCell className="font-medium">{brl.format(employee.balance)}</TableCell><TableCell><Badge variant="secondary" className={employee.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{employee.active ? "Ativo" : "Inativo"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="icon-sm" aria-label={`Editar ${employee.full_name}`} onClick={() => onEdit(employee)}><Pencil /></Button></TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card></>;
-}
-
-function DepartmentsSection({ data, onNew, onEdit }: { data: DepartmentsData | null; onNew: () => void; onEdit: (department: Department) => void }) {
-  return <><SectionTitle eyebrow="Estrutura da empresa" title="Setores" description="Adicione e edite os setores usados no cadastro dos usuários." action={<Button className="w-full bg-[#ef7d22] hover:bg-[#d86d18] sm:w-auto" onClick={onNew}><Plus /> Novo setor</Button>} />
-    <Card className="min-w-0 gap-0 overflow-hidden border-slate-200 py-0 shadow-none"><CardContent className="p-0">
-      {data?.departments.length ? <>
-        <div className="divide-y divide-slate-100 md:hidden">{data.departments.map((department) => <article key={department.id} className="p-4"><div className="flex items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-[#102a43]"><Building2 className="size-4" /></span><div className="min-w-0 flex-1"><p className="truncate font-semibold">{department.name}</p><p className="mt-1 text-xs text-slate-500">{department.employee_count ?? 0} {(department.employee_count ?? 0) === 1 ? "usuário" : "usuários"}</p></div><Badge variant="secondary" className={department.active !== false ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{department.active !== false ? "Ativo" : "Inativo"}</Badge></div><Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => onEdit(department)}><Pencil /> Editar setor</Button></article>)}</div>
-        <div className="hidden md:block"><Table className="min-w-[620px]"><TableHeader><TableRow><TableHead>Setor</TableHead><TableHead>Usuários</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader><TableBody>{data.departments.map((department) => <TableRow key={department.id}><TableCell><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-slate-100 text-[#102a43]"><Building2 className="size-4" /></span><span className="font-medium">{department.name}</span></div></TableCell><TableCell>{department.employee_count ?? 0}</TableCell><TableCell><Badge variant="secondary" className={department.active !== false ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{department.active !== false ? "Ativo" : "Inativo"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => onEdit(department)}><Pencil /> Editar</Button></TableCell></TableRow>)}</TableBody></Table></div>
-      </> : <EmptyState icon={Building2} title="Nenhum setor cadastrado" text="Crie o primeiro setor da empresa." />}
-    </CardContent></Card>
-  </>;
+  return <><SectionTitle eyebrow="Equipe" title="Usuários" description="Gerencie identificação, OM, contato e acesso." action={<Button className="w-full bg-[#ef7d22] hover:bg-[#d86d18] sm:w-auto" onClick={onNew}><UserPlus /> Novo usuário</Button>} /><Card className="min-w-0 gap-0 overflow-hidden border-slate-200 py-0 shadow-none"><CardContent className="p-0"><div className="divide-y divide-slate-100 md:hidden">{data?.employees.map((employee) => <article key={employee.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 text-xs text-slate-500">Matrícula {employee.enrollment}</p></div><Badge variant="secondary" className={employee.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{employee.active ? "Ativo" : "Inativo"}</Badge></div><div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-sm"><div className="min-w-0"><p className="text-xs text-slate-500">OM</p><p className="mt-0.5 truncate font-medium">{employee.organization_unit || "Não informada"}</p></div><div className="min-w-0"><p className="text-xs text-slate-500">Saldo</p><p className="mt-0.5 truncate font-medium">{brl.format(employee.balance)}</p></div><div className="col-span-2"><p className="text-xs text-slate-500">Contato</p><p className="mt-0.5 font-medium">{employee.extension ? `Ramal ${employee.extension}` : employee.phone || "Não informado"}</p></div></div><Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => onEdit(employee)}><Pencil /> Editar usuário</Button></article>)}</div><div className="hidden md:block"><Table className="min-w-[680px]"><TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>OM</TableHead><TableHead>Contato</TableHead><TableHead>Saldo</TableHead><TableHead>Status</TableHead><TableHead /></TableRow></TableHeader><TableBody>{data?.employees.map((employee) => <TableRow key={employee.id}><TableCell><p className="font-medium">{employee.full_name}</p><p className="text-xs text-slate-500">Matrícula {employee.enrollment}</p></TableCell><TableCell>{employee.organization_unit || "—"}</TableCell><TableCell className="text-slate-600">{employee.extension ? `Ramal ${employee.extension}` : employee.phone || "—"}</TableCell><TableCell className="font-medium">{brl.format(employee.balance)}</TableCell><TableCell><Badge variant="secondary" className={employee.active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"}>{employee.active ? "Ativo" : "Inativo"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="icon-sm" aria-label={`Editar ${employee.full_name}`} onClick={() => onEdit(employee)}><Pencil /></Button></TableCell></TableRow>)}</TableBody></Table></div></CardContent></Card></>;
 }
 
 function ReportSection({ report, onReport, session }: { report: ReportData | null; onReport: (report: ReportData) => void; session: Session }) {
@@ -549,7 +529,7 @@ function OrganizationUnitFields({ value, onValueChange, idPrefix, customDefaultV
   return <div className="space-y-3"><div className="space-y-2"><Label htmlFor={`${idPrefix}-organization-unit`}>OM</Label><Select value={value} onValueChange={onValueChange} required><SelectTrigger id={`${idPrefix}-organization-unit`} className="w-full"><SelectValue placeholder="Selecione a OM" /></SelectTrigger><SelectContent>{STANDARD_ORGANIZATION_UNITS.map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>)}<SelectItem value={OTHER_ORGANIZATION_UNIT}>Outros</SelectItem></SelectContent></Select></div>{value === OTHER_ORGANIZATION_UNIT && <div className="space-y-2"><Label htmlFor={`${idPrefix}-organization-unit-other`}>Qual é a OM?</Label><Input id={`${idPrefix}-organization-unit-other`} name="organization_unit_other" defaultValue={customDefaultValue} maxLength={100} placeholder="Digite o nome da OM" required /></div>}</div>;
 }
 
-function EmployeeDialog({ openValue, data, session, onClose, onSaved }: { openValue: Employee | null | "new"; data: EmployeesData | null; session: Session; onClose: () => void; onSaved: () => void }) {
+function EmployeeDialog({ openValue, session, onClose, onSaved }: { openValue: Employee | null | "new"; session: Session; onClose: () => void; onSaved: () => void }) {
   const employee = openValue === "new" ? null : openValue;
   const [busy, setBusy] = useState(false);
   const currentOrganizationUnit = employee?.organization_unit ?? "";
@@ -565,7 +545,6 @@ function EmployeeDialog({ openValue, data, session, onClose, onSaved }: { openVa
         id: employee?.id,
         full_name: form.get("full_name"),
         enrollment: form.get("enrollment"),
-        department_id: Number(form.get("department_id")),
         organization_unit: organizationUnit === OTHER_ORGANIZATION_UNIT ? form.get("organization_unit_other") : organizationUnit,
         extension: form.get("extension"),
         phone: form.get("phone"),
@@ -581,27 +560,7 @@ function EmployeeDialog({ openValue, data, session, onClose, onSaved }: { openVa
     }
   }
 
-  return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{employee ? "Editar usuário" : "Novo usuário"}</DialogTitle><DialogDescription>Dados usados para identificação e cobrança.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="employee-name">Nome completo</Label><Input id="employee-name" name="full_name" defaultValue={employee?.full_name ?? ""} required /></div><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="employee-enrollment">Matrícula</Label><Input id="employee-enrollment" name="enrollment" defaultValue={employee?.enrollment ?? ""} required /></div><div className="space-y-2"><Label>Setor</Label><Select name="department_id" defaultValue={String(employee?.department_id ?? data?.departments[0]?.id ?? "")} required><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{data?.departments.filter((department) => department.active !== false).map((department) => <SelectItem key={department.id} value={String(department.id)}>{department.name}</SelectItem>)}</SelectContent></Select></div></div><OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="employee" customDefaultValue={isStandardUnit ? "" : currentOrganizationUnit} /><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="employee-extension">Ramal</Label><Input id="employee-extension" name="extension" defaultValue={employee?.extension ?? ""} /></div><div className="space-y-2"><Label htmlFor="employee-phone">WhatsApp</Label><Input id="employee-phone" name="phone" defaultValue={employee?.phone ?? ""} /></div></div><div className="space-y-2"><Label htmlFor="employee-pin">{employee ? "Novo PIN (opcional)" : "PIN inicial"}</Label><Input id="employee-pin" name="pin" type="password" inputMode="numeric" minLength={4} maxLength={8} required={!employee} /><p className="text-xs text-slate-500">De 4 a 8 números.</p></div><div className="flex items-center justify-between rounded-lg border p-3"><Label htmlFor="employee-active">Usuário ativo</Label><Switch id="employee-active" name="active" defaultChecked={employee?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar usuário"}</Button></DialogFooter></form></DialogContent></Dialog>;
-}
-
-function DepartmentDialog({ openValue, session, onClose, onSaved }: { openValue: Department | null | "new"; session: Session; onClose: () => void; onSaved: () => void }) {
-  const department = openValue === "new" ? null : openValue;
-  const [busy, setBusy] = useState(false);
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setBusy(true);
-    try {
-      await sisbarApi("department_upsert", { id: department?.id, name: form.get("name"), active: form.get("active") === "on" }, session.token);
-      toast.success(department ? "Setor atualizado." : "Setor cadastrado.");
-      onSaved();
-    } catch (error) {
-      toast.error(errorMessage(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent><DialogHeader><DialogTitle>{department ? "Editar setor" : "Novo setor"}</DialogTitle><DialogDescription>O setor ficará disponível no cadastro e na edição de usuários.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="department-name">Nome do setor</Label><Input id="department-name" name="name" defaultValue={department?.name ?? ""} placeholder="Ex.: Financeiro" maxLength={80} required /></div><div className="flex items-center justify-between rounded-lg border p-3"><div><Label htmlFor="department-active">Setor ativo</Label><p className="mt-1 text-xs text-slate-500">Setores inativos não aparecem em novos cadastros.</p></div><Switch id="department-active" name="active" defaultChecked={department?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar setor"}</Button></DialogFooter></form></DialogContent></Dialog>;
+  return <Dialog open={openValue !== null} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{employee ? "Editar usuário" : "Novo usuário"}</DialogTitle><DialogDescription>Dados usados para identificação e cobrança.</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={save}><div className="space-y-2"><Label htmlFor="employee-name">Nome completo</Label><Input id="employee-name" name="full_name" defaultValue={employee?.full_name ?? ""} required /></div><div className="space-y-2"><Label htmlFor="employee-enrollment">Matrícula</Label><Input id="employee-enrollment" name="enrollment" defaultValue={employee?.enrollment ?? ""} required /></div><OrganizationUnitFields value={organizationUnit} onValueChange={setOrganizationUnit} idPrefix="employee" customDefaultValue={isStandardUnit ? "" : currentOrganizationUnit} /><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="employee-extension">Ramal</Label><Input id="employee-extension" name="extension" defaultValue={employee?.extension ?? ""} /></div><div className="space-y-2"><Label htmlFor="employee-phone">WhatsApp</Label><Input id="employee-phone" name="phone" defaultValue={employee?.phone ?? ""} /></div></div><div className="space-y-2"><Label htmlFor="employee-pin">{employee ? "Novo PIN (opcional)" : "PIN inicial"}</Label><Input id="employee-pin" name="pin" type="password" inputMode="numeric" minLength={4} maxLength={8} required={!employee} /><p className="text-xs text-slate-500">De 4 a 8 números.</p></div><div className="flex items-center justify-between rounded-lg border p-3"><Label htmlFor="employee-active">Usuário ativo</Label><Switch id="employee-active" name="active" defaultChecked={employee?.active ?? true} /></div><DialogFooter><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-[#102a43] hover:bg-[#173d5f]" disabled={busy}>{busy ? "Salvando..." : "Salvar usuário"}</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 function PaymentDialog({ employee, session, onClose, onSaved }: { employee: Employee | null; session: Session; onClose: () => void; onSaved: () => void }) {

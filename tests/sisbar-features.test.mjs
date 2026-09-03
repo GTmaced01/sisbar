@@ -9,11 +9,12 @@ async function source(path) {
   return readFile(new URL(path, `file://${root}/`), "utf8");
 }
 
-test("admin includes sale cancellation, departments and product images", async () => {
+test("admin includes sale cancellation, OM and product images", async () => {
   const admin = await source("app/admin-dashboard.tsx");
   assert.match(admin, /sale_cancel/);
-  assert.match(admin, /departments_list/);
-  assert.match(admin, /department_upsert/);
+  assert.doesNotMatch(admin, /departments_list/);
+  assert.doesNotMatch(admin, /department_upsert/);
+  assert.doesNotMatch(admin, /Setores/);
   assert.match(admin, /image_data/);
   assert.match(admin, /item\.product_name/);
   assert.match(admin, /cancelReason/);
@@ -50,7 +51,7 @@ test("mobile views use bounded layouts and dedicated compact records", async () 
   const store = await source("app/employee-store.tsx");
   assert.match(admin, /overflow-x-hidden/);
   assert.match(admin, /md:hidden/);
-  assert.match(admin, /min-w-\[760px\]/);
+  assert.match(admin, /min-w-\[680px\]/);
   assert.match(store, /overflow-x-hidden/);
   assert.match(store, /safe-area-inset-bottom/);
   assert.match(store, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
@@ -80,4 +81,32 @@ test("database migration adds OM and atomic product creation", async () => {
   assert.match(migration, /insert into public\.inventory/);
   assert.match(migration, /insert into public\.stock_movements/);
   assert.match(migration, /grant execute on function public\.sisbar_create_product/);
+});
+
+test("departments are removed from UI, API and database", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  const store = await source("app/employee-store.tsx");
+  const api = await source("supabase/functions/sisbar-api/index.ts");
+  const schema = await source("supabase/schema.sql");
+  const migration = await source("supabase/migrations/20260903000000_remove_departments.sql");
+  for (const contents of [admin, store, api]) assert.doesNotMatch(contents, /department|\bsetores?\b/i);
+  assert.doesNotMatch(schema, /public\.departments|department_id/);
+  assert.match(migration, /drop column if exists department_id/);
+  assert.match(migration, /drop table if exists public\.departments/);
+});
+
+test("PWA assets support Android and iOS installation", async () => {
+  const manifest = await source("app/manifest.ts");
+  const layout = await source("app/layout.tsx");
+  const serviceWorker = await source("public/sw.js");
+  const installer = await source("components/pwa-install-button.tsx");
+  assert.match(manifest, /display: "standalone"/);
+  assert.match(manifest, /icon-192\.png/);
+  assert.match(manifest, /icon-maskable-512\.png/);
+  assert.match(layout, /appleWebApp/);
+  assert.match(layout, /apple-touch-icon\.png/);
+  assert.match(serviceWorker, /sisbar-shell-v1/);
+  assert.match(serviceWorker, /request\.method !== "GET"/);
+  assert.match(installer, /beforeinstallprompt/);
+  assert.match(installer, /Adicionar à Tela de Início/);
 });
