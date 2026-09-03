@@ -641,6 +641,37 @@ async function productUpsert(req: Request, body: Json) {
   return respond(id ? 200 : 201, { ok: true, data: product });
 }
 
+async function productDelete(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const productId = numericId(body.product_id);
+  if (!productId) return fail(400, "invalid_product", "Informe o produto que será removido.");
+
+  const { data: product } = await db
+    .from("products")
+    .select("id, image_url")
+    .eq("id", productId)
+    .eq("company_id", session.company.id)
+    .maybeSingle();
+  if (!product) return fail(404, "product_not_found", "Produto não encontrado.");
+
+  const imagePath = productImagePath(product.image_url, session.company.id);
+  const { data, error } = await db.rpc("sisbar_delete_product", {
+    p_company_id: session.company.id,
+    p_product_id: productId,
+    p_admin_id: session.account.id,
+  });
+  if (error) {
+    const message = error.message.includes("product_has_history")
+      ? "Este produto já possui venda ou entrada financeira. Desative o produto para preservar os relatórios."
+      : error.message.includes("product_not_found")
+        ? "Produto não encontrado."
+        : "Não foi possível remover o produto.";
+    return fail(409, "product_delete_failed", message);
+  }
+  if (imagePath) await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([imagePath]);
+  return respond(200, { ok: true, data });
+}
+
 async function stockAdjust(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const fridgeId = numericId(body.fridge_id);
@@ -1074,6 +1105,7 @@ Deno.serve(async (req: Request) => {
       case "dashboard": return await dashboard(req);
       case "products_list": return await productsList(req);
       case "product_upsert": return await productUpsert(req, body);
+      case "product_delete": return await productDelete(req, body);
       case "stock_adjust": return await stockAdjust(req, body);
       case "employees_list": return await employeesList(req);
       case "employee_upsert": return await employeeUpsert(req, body);

@@ -16,6 +16,8 @@ test("admin includes sale cancellation, OM and product images", async () => {
   assert.doesNotMatch(admin, /department_upsert/);
   assert.doesNotMatch(admin, /Setores/);
   assert.match(admin, /image_data/);
+  assert.match(admin, /product_delete/);
+  assert.match(admin, /Remover produto/);
   assert.match(admin, /item\.product_name/);
   assert.match(admin, /cancelReason/);
   assert.match(admin, /optimizeProductImage/);
@@ -62,7 +64,19 @@ test("edge API protects cancellation and image uploads", async () => {
   assert.match(api, /requireAdmin\(req\)/);
   assert.match(api, /sisbar_cancel_sale/);
   assert.match(api, /PRODUCT_IMAGE_MAX_BYTES/);
+  assert.match(api, /async function productDelete/);
+  assert.match(api, /case "product_delete"/);
   assert.match(api, /payment_status !== "cancelled"/);
+});
+
+test("database migration adds safe product deletion", async () => {
+  const migration = await source("supabase/migrations/20260903113000_add_product_delete.sql");
+  const schema = await source("supabase/schema.sql");
+  assert.match(migration, /create or replace function public\.sisbar_delete_product/);
+  assert.match(migration, /product_has_history/);
+  assert.match(migration, /delete from public\.stock_movements/);
+  assert.match(migration, /delete from public\.products/);
+  assert.match(schema, /grant execute on function public\.sisbar_delete_product/);
 });
 
 test("database migration restores stock and configures the image bucket", async () => {

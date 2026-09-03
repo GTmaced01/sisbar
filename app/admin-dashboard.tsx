@@ -33,6 +33,7 @@ import {
   Settings,
   ShieldCheck,
   TrendingUp,
+  Trash2,
   UserPlus,
   Users,
   WalletCards,
@@ -187,6 +188,8 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
   const [report, setReport] = useState<ReportData | null>(null);
   const [productDialog, setProductDialog] = useState<Product | null | "new">(null);
   const [stockProduct, setStockProduct] = useState<Product | null>(null);
+  const [deleteProduct, setDeleteProduct] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
   const [employeeDialog, setEmployeeDialog] = useState<Employee | null | "new">(null);
   const [paymentEmployee, setPaymentEmployee] = useState<Employee | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -235,6 +238,44 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
     setMobileMenuOpen(false);
   }
 
+  async function toggleProductActive(product: Product) {
+    if (!session) return;
+    try {
+      await sisbarApi("product_upsert", {
+        id: product.id,
+        name: product.name,
+        description: product.description ?? "",
+        sku: product.sku ?? "",
+        category: product.category,
+        sale_price: product.sale_price,
+        cost_price: product.cost_price ?? "",
+        active: product.active === false,
+        fridge_id: product.inventories?.[0]?.fridge_id,
+        initial_stock: 0,
+        min_quantity: product.inventories?.[0]?.min_quantity ?? 5,
+      }, session.token);
+      toast.success(product.active === false ? "Produto ativado." : "Produto desativado.");
+      await refreshRelated();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+
+  async function confirmDeleteProduct() {
+    if (!session || !deleteProduct) return;
+    setDeletingProduct(true);
+    try {
+      await sisbarApi("product_delete", { product_id: deleteProduct.id }, session.token);
+      toast.success("Produto removido.");
+      setDeleteProduct(null);
+      await refreshRelated();
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setDeletingProduct(false);
+    }
+  }
+
   if (!session) return <AdminLogin companySlug={companySlug} onLogin={onLogin} onBack={onOpenStore} />;
 
   const activeLabel = navigation.find((item) => item.id === view)?.label ?? "Painel";
@@ -274,7 +315,7 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
           {view === "sales" && <SalesSection sales={sales} session={session} onCancelled={() => void refreshRelated()} />}
           {view === "receivables" && <ReceivablesSection data={receivablesData} onPay={setPaymentEmployee} company={session.company} />}
           {view === "finance" && <FinanceDashboard session={session} />}
-          {view === "products" && <ProductsSection data={productsData} onNew={() => setProductDialog("new")} onEdit={setProductDialog} onStock={setStockProduct} />}
+          {view === "products" && <ProductsSection data={productsData} onNew={() => setProductDialog("new")} onEdit={setProductDialog} onStock={setStockProduct} onToggleActive={(product) => void toggleProductActive(product)} onDelete={setDeleteProduct} />}
           {view === "employees" && <EmployeesSection data={employeesData} onNew={() => setEmployeeDialog("new")} onEdit={setEmployeeDialog} />}
           {view === "report" && <ReportSection report={report} onReport={setReport} session={session} />}
           {view === "settings" && <SettingsSection session={session} companySlug={companySlug} onSessionChange={(next) => { saveSession(ADMIN_SESSION, next); setSession(next); }} />}
@@ -283,6 +324,24 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
 
       <ProductDialog key={productDialog === "new" ? "new" : productDialog?.id ?? "closed"} openValue={productDialog} data={productsData} session={session} onClose={() => setProductDialog(null)} onSaved={() => { setProductDialog(null); void refreshRelated(); }} />
       <StockDialog product={stockProduct} data={productsData} session={session} onClose={() => setStockProduct(null)} onSaved={() => { setStockProduct(null); void refreshRelated(); }} />
+      <AlertDialog open={Boolean(deleteProduct)} onOpenChange={(open) => { if (!open && !deletingProduct) setDeleteProduct(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover este produto?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O produto será apagado do catálogo e do estoque. Se ele já tiver histórico financeiro real, o sistema impedirá a remoção para preservar relatórios.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+            <p className="font-medium">{deleteProduct?.name}</p>
+            <p className="mt-1 text-xs text-slate-500">{deleteProduct ? `${brl.format(deleteProduct.sale_price)} · ${deleteProduct.inventories?.[0]?.quantity ?? 0} un. em estoque` : ""}</p>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingProduct}>Voltar</AlertDialogCancel>
+            <AlertDialogAction className="bg-rose-700 hover:bg-rose-800" disabled={deletingProduct} onClick={(event) => { event.preventDefault(); void confirmDeleteProduct(); }}>{deletingProduct ? "Removendo..." : "Remover produto"}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <EmployeeDialog key={employeeDialog === "new" ? "new" : employeeDialog?.id ?? "closed"} openValue={employeeDialog} session={session} onClose={() => setEmployeeDialog(null)} onSaved={() => { setEmployeeDialog(null); void refreshRelated(); }} />
       <PaymentDialog employee={paymentEmployee} session={session} onClose={() => setPaymentEmployee(null)} onSaved={() => { setPaymentEmployee(null); void refreshRelated(); }} />
       <ChangePinDialog session={session} required={session.account.must_change_pin === true} onChanged={() => { const next = { ...session, account: { ...session.account, must_change_pin: false } }; saveSession(ADMIN_SESSION, next); setSession(next); }} />
@@ -399,11 +458,58 @@ function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | 
     const message = `Olá, ${employee.full_name.split(" ")[0]}! Segue seu extrato do ${company.name}:\n${due}\n\nSaldo em aberto: *${brl.format(employee.balance)}*.${company.pix_key ? `\nChave Pix: ${company.pix_key}` : ""}\nObrigado!`;
     window.open(`https://wa.me/55${digitsOnly(employee.phone)}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   }
-  return <><SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Saldos em aberto agrupados por usuário." /><Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card><div className="space-y-3">{data?.receivables.length ? data.receivables.map((employee) => <Card key={employee.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:flex sm:items-center sm:gap-4 sm:p-5"><div className="flex min-w-0 items-center gap-3 sm:flex-1"><div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 text-xs leading-5 text-slate-500">OM {employee.organization_unit || "Não informada"} · Matrícula {employee.enrollment} · {employee.open_sales} {employee.open_sales === 1 ? "venda" : "vendas"}</p></div></div><div className="mt-4 flex items-end justify-between gap-3 sm:mt-0 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div><div className="mt-4 grid grid-cols-2 gap-2 sm:mt-0 sm:flex"><Button variant="outline" size="sm" className="w-full" onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="w-full bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div></CardContent></Card>) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}</div></>;
+  return <><SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Saldos em aberto agrupados por usuário." /><Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card><div className="space-y-3">{data?.receivables.length ? data.receivables.map((employee) => <Card key={employee.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="grid min-w-0 gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5 xl:grid-cols-[minmax(0,1fr)_auto_auto]"><div className="flex min-w-0 items-center gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 break-words text-xs leading-5 text-slate-500">OM {employee.organization_unit || "Não informada"} · Matrícula {employee.enrollment} · {employee.open_sales} {employee.open_sales === 1 ? "venda" : "vendas"}</p></div></div><div className="flex items-end justify-between gap-3 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div><div className="grid min-w-0 grid-cols-2 gap-2 sm:col-span-2 xl:col-span-1 xl:flex xl:justify-end"><Button variant="outline" size="sm" className="min-w-0" onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="min-w-0 bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div></CardContent></Card>) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}</div></>;
 }
 
-function ProductsSection({ data, onNew, onEdit, onStock }: { data: ProductsData | null; onNew: () => void; onEdit: (product: Product) => void; onStock: (product: Product) => void }) {
-  return <><SectionTitle eyebrow="Catálogo" title="Produtos e estoque" description="Cadastre itens, fotos, preços e acompanhe as quantidades." action={<Button className="w-full bg-[#ef7d22] hover:bg-[#d86d18] sm:w-auto" onClick={onNew}><Plus /> Novo produto</Button>} /><div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">{data?.products.map((product) => { const inventory = product.inventories?.[0]; const low = (inventory?.quantity ?? 0) <= (inventory?.min_quantity ?? 0); return <Card key={product.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="p-4 sm:p-5"><div className="flex items-start justify-between gap-3">{product.image_url ? <Image src={product.image_url} alt="" width={48} height={48} className="size-12 rounded-xl border border-slate-200 object-cover" /> : <span className="grid size-12 place-items-center rounded-xl bg-slate-100 text-[#102a43]"><Boxes className="size-5" /></span>}<Badge variant="secondary" className={!product.active ? "bg-slate-100 text-slate-600" : low ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}>{!product.active ? "Inativo" : low ? "Estoque baixo" : "Disponível"}</Badge></div><h3 className="mt-4 truncate font-semibold">{product.name}</h3><p className="mt-1 truncate text-xs capitalize text-slate-500">{product.category} {product.sku ? `· ${product.sku}` : ""}</p><div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3"><div className="min-w-0 rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Preço</p><p className="mt-1 truncate font-semibold">{brl.format(product.sale_price)}</p></div><div className={`min-w-0 rounded-lg p-3 ${low ? "bg-amber-50" : "bg-slate-50"}`}><p className="text-xs text-slate-500">Estoque</p><p className="mt-1 truncate font-semibold">{inventory?.quantity ?? 0} un.</p></div></div><div className="mt-4 grid grid-cols-2 gap-2"><Button variant="outline" size="sm" className="w-full" onClick={() => onEdit(product)}><Pencil /> Editar</Button><Button size="sm" className="w-full bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onStock(product)}><PackagePlus /> Ajustar</Button></div></CardContent></Card>; })}</div></>;
+function ProductsSection({ data, onNew, onEdit, onStock, onToggleActive, onDelete }: { data: ProductsData | null; onNew: () => void; onEdit: (product: Product) => void; onStock: (product: Product) => void; onToggleActive: (product: Product) => void; onDelete: (product: Product) => void }) {
+  return (
+    <>
+      <SectionTitle
+        eyebrow="Catálogo"
+        title="Produtos e estoque"
+        description="Cadastre itens, fotos, preços e acompanhe as quantidades."
+        action={<Button className="w-full bg-[#ef7d22] hover:bg-[#d86d18] sm:w-auto" onClick={onNew}><Plus /> Novo produto</Button>}
+      />
+      <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {data?.products.map((product) => {
+          const inventory = product.inventories?.[0];
+          const low = (inventory?.quantity ?? 0) <= (inventory?.min_quantity ?? 0);
+          return (
+            <Card key={product.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none">
+              <CardContent className="p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  {product.image_url ? (
+                    <Image src={product.image_url} alt="" width={48} height={48} className="size-12 shrink-0 rounded-xl border border-slate-200 object-cover" />
+                  ) : (
+                    <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-slate-100 text-[#102a43]"><Boxes className="size-5" /></span>
+                  )}
+                  <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+                    <Badge variant="secondary" className={!product.active ? "bg-slate-100 text-slate-600" : low ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}>
+                      {!product.active ? "Inativo" : low ? "Estoque baixo" : "Disponível"}
+                    </Badge>
+                    <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => onToggleActive(product)}>
+                      {product.active === false ? "Ativar" : "Desativar"}
+                    </Button>
+                  </div>
+                </div>
+                <h3 className="mt-4 truncate font-semibold">{product.name}</h3>
+                <p className="mt-1 truncate text-xs capitalize text-slate-500">{product.category} {product.sku ? `· ${product.sku}` : ""}</p>
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 sm:gap-3">
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-500">Preço</p><p className="mt-1 truncate font-semibold">{brl.format(product.sale_price)}</p></div>
+                  <div className={`min-w-0 rounded-lg p-3 ${low ? "bg-amber-50" : "bg-slate-50"}`}><p className="text-xs text-slate-500">Estoque</p><p className="mt-1 truncate font-semibold">{inventory?.quantity ?? 0} un.</p></div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => onEdit(product)}><Pencil /> Editar</Button>
+                  <Button size="sm" className="w-full bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onStock(product)}><PackagePlus /> Ajustar</Button>
+                  <Button variant="outline" size="sm" className="col-span-2 w-full border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800 sm:col-span-1" onClick={() => onDelete(product)}><Trash2 /> Remover</Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 function EmployeesSection({ data, onNew, onEdit }: { data: EmployeesData | null; onNew: () => void; onEdit: (employee: Employee) => void }) {
