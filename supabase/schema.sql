@@ -290,13 +290,14 @@ create index inventory_company_fridge_idx on public.inventory (company_id, fridg
 create index inventory_product_id_idx on public.inventory (product_id);
 create index inventory_company_product_idx on public.inventory (company_id, product_id);
 create index inventory_purchases_company_date_idx on public.inventory_purchases (company_id, purchase_date desc);
-create index inventory_purchases_supplier_id_idx on public.inventory_purchases (supplier_id);
-create index inventory_purchases_fridge_id_idx on public.inventory_purchases (fridge_id);
-create index inventory_purchases_created_by_idx on public.inventory_purchases (created_by);
+create index inventory_purchases_company_supplier_idx on public.inventory_purchases (company_id, supplier_id);
+create index inventory_purchases_company_fridge_idx on public.inventory_purchases (company_id, fridge_id);
+create index inventory_purchases_company_created_by_idx on public.inventory_purchases (company_id, created_by);
 create index inventory_purchases_company_due_idx on public.inventory_purchases (company_id, due_date)
   where payment_status = 'pending' and status = 'confirmed';
 create index inventory_purchase_items_purchase_id_idx on public.inventory_purchase_items (purchase_id);
-create index inventory_purchase_items_product_id_idx on public.inventory_purchase_items (product_id);
+create index inventory_purchase_items_company_purchase_idx on public.inventory_purchase_items (company_id, purchase_id);
+create index inventory_purchase_items_company_product_idx on public.inventory_purchase_items (company_id, product_id);
 create index sales_company_sold_at_idx on public.sales (company_id, sold_at desc);
 create index sales_employee_id_idx on public.sales (employee_id);
 create index sales_fridge_id_idx on public.sales (fridge_id);
@@ -316,8 +317,8 @@ create index stock_movements_fridge_id_idx on public.stock_movements (fridge_id)
 create index stock_movements_actor_id_idx on public.stock_movements (actor_account_id);
 create index stock_movements_company_fridge_idx on public.stock_movements (company_id, fridge_id);
 create index stock_movements_company_actor_idx on public.stock_movements (company_id, actor_account_id);
-create index expenses_supplier_id_idx on public.expenses (supplier_id);
-create index expenses_created_by_idx on public.expenses (created_by);
+create index expenses_company_supplier_idx on public.expenses (company_id, supplier_id);
+create index expenses_company_created_by_idx on public.expenses (company_id, created_by);
 create index expenses_company_competence_idx on public.expenses (company_id, competence_date desc);
 create index expenses_company_due_idx on public.expenses (company_id, due_date) where status = 'pending';
 create index audit_logs_company_created_idx on public.audit_logs (company_id, created_at desc);

@@ -130,4 +130,8 @@ test("financial management covers purchases, costs, expenses and profit", async 
   assert.match(migration, /create or replace function public\.sisbar_register_purchase/);
   assert.match(migration, /unit_cost numeric/);
   assert.match(migration, /cost_total numeric/);
+  const indexes = await source("supabase/migrations/20260903101500_cover_financial_foreign_keys.sql");
+  assert.match(indexes, /inventory_purchases_company_supplier_idx/);
+  assert.match(indexes, /inventory_purchase_items_company_product_idx/);
+  assert.match(indexes, /expenses_company_created_by_idx/);
 });
