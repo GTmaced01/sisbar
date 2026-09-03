@@ -40,6 +40,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { FinanceDashboard } from "@/app/finance-dashboard";
+
 import { Badge } from "@/components/ui/badge";
 import {
   AlertDialog,
@@ -85,7 +87,7 @@ import {
   sisbarApi,
 } from "@/lib/sisbar";
 
-type AdminView = "dashboard" | "sales" | "receivables" | "products" | "employees" | "report" | "settings";
+type AdminView = "dashboard" | "sales" | "receivables" | "finance" | "products" | "employees" | "report" | "settings";
 type DashboardData = { metrics: { sold: number; received: number; receivable: number; low_stock: number; employees: number }; recent_sales: Sale[] };
 type ProductsData = { products: Product[]; fridges: Fridge[] };
 type EmployeesData = { employees: Employee[] };
@@ -105,6 +107,7 @@ const navigation: Array<{ id: AdminView; label: string; icon: typeof LayoutDashb
   { id: "dashboard", label: "Visão geral", icon: LayoutDashboard },
   { id: "sales", label: "Vendas", icon: ReceiptText },
   { id: "receivables", label: "Contas a receber", icon: CircleDollarSign },
+  { id: "finance", label: "Gestão financeira", icon: WalletCards },
   { id: "products", label: "Produtos e estoque", icon: Boxes },
   { id: "employees", label: "Usuários", icon: Users },
   { id: "report", label: "Relatório mensal", icon: FileBarChart },
@@ -270,6 +273,7 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
           {view === "dashboard" && <DashboardSection data={dashboard} onNavigate={setView} />}
           {view === "sales" && <SalesSection sales={sales} session={session} onCancelled={() => void refreshRelated()} />}
           {view === "receivables" && <ReceivablesSection data={receivablesData} onPay={setPaymentEmployee} company={session.company} />}
+          {view === "finance" && <FinanceDashboard session={session} />}
           {view === "products" && <ProductsSection data={productsData} onNew={() => setProductDialog("new")} onEdit={setProductDialog} onStock={setStockProduct} />}
           {view === "employees" && <EmployeesSection data={employeesData} onNew={() => setEmployeeDialog("new")} onEdit={setEmployeeDialog} />}
           {view === "report" && <ReportSection report={report} onReport={setReport} session={session} />}

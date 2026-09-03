@@ -88,6 +88,27 @@ function money(value: unknown) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0;
 }
 
+function validDate(value: unknown) {
+  const date = text(value, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+function monthRange(value: unknown) {
+  const month = text(value, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) return null;
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (monthNumber < 1 || monthNumber > 12) return null;
+  const endYear = monthNumber === 12 ? year + 1 : year;
+  const endMonth = monthNumber === 12 ? 1 : monthNumber + 1;
+  return {
+    month,
+    startDate: `${month}-01`,
+    endDate: `${endYear}-${String(endMonth).padStart(2, "0")}-01`,
+    startTimestamp: new Date(Date.UTC(year, monthNumber - 1, 1, 3)).toISOString(),
+    endTimestamp: new Date(Date.UTC(endYear, endMonth - 1, 1, 3)).toISOString(),
+  };
+}
+
 async function uploadProductImage(companyId: number, body: Json) {
   const contentType = text(body.image_content_type, 40).toLowerCase();
   const extension = PRODUCT_IMAGE_TYPES.get(contentType);
@@ -767,6 +788,209 @@ async function recordPayment(req: Request, body: Json) {
   return respond(201, { ok: true, data });
 }
 
+async function suppliersList(req: Request) {
+  const session = await requireAdmin(req);
+  const { data, error } = await db.from("suppliers").select("id, name, tax_id, phone, email, active, created_at").eq("company_id", session.company.id).order("name");
+  if (error) return fail(500, "suppliers_failed", "Não foi possível carregar os fornecedores.");
+  return respond(200, { ok: true, data: { suppliers: data ?? [] } });
+}
+
+async function supplierUpsert(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const name = text(body.name, 140).replace(/\s+/g, " ");
+  const values = {
+    name,
+    tax_id: text(body.tax_id, 24) || null,
+    phone: digits(body.phone) || null,
+    email: text(body.email, 180).toLowerCase() || null,
+    active: body.active !== false,
+  };
+  if (name.length < 2) return fail(400, "invalid_supplier", "Informe o nome do fornecedor.");
+
+  const query = id
+    ? db.from("suppliers").update(values).eq("id", id).eq("company_id", session.company.id).select("id, name, tax_id, phone, email, active").maybeSingle()
+    : db.from("suppliers").insert({ ...values, company_id: session.company.id }).select("id, name, tax_id, phone, email, active").single();
+  const { data, error } = await query;
+  if (error?.code === "23505") return fail(409, "supplier_exists", "Já existe um fornecedor com esse nome.");
+  if (error || !data) return fail(id ? 404 : 500, "supplier_failed", id ? "Fornecedor não encontrado." : "Não foi possível cadastrar o fornecedor.");
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: id ? "supplier_updated" : "supplier_created", entity_type: "supplier", entity_id: String(data.id) });
+  return respond(id ? 200 : 201, { ok: true, data });
+}
+
+async function purchasesList(req: Request) {
+  const session = await requireAdmin(req);
+  const { data, error } = await db.from("inventory_purchases")
+    .select("id, public_id, supplier_id, fridge_id, invoice_number, purchase_date, due_date, status, payment_status, payment_method, total, amount_paid, paid_at, notes, created_at, suppliers(name), fridges(name), inventory_purchase_items(product_id, product_name, quantity, unit_cost, subtotal)")
+    .eq("company_id", session.company.id).order("purchase_date", { ascending: false }).limit(500);
+  if (error) return fail(500, "purchases_failed", "Não foi possível carregar as entradas de mercadoria.");
+  return respond(200, { ok: true, data: { purchases: data ?? [] } });
+}
+
+async function purchaseCreate(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const fridgeId = numericId(body.fridge_id);
+  const supplierId = numericId(body.supplier_id);
+  const purchaseDate = validDate(body.purchase_date);
+  const dueDate = body.due_date ? validDate(body.due_date) : null;
+  const paymentStatus = text(body.payment_status, 20);
+  const paymentMethod = text(body.payment_method, 20) || null;
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!fridgeId || !purchaseDate || (body.due_date && !dueDate) || !["pending", "paid"].includes(paymentStatus) || items.length < 1) {
+    return fail(400, "invalid_purchase", "Confira a geladeira, a data, o pagamento e os itens da entrada.");
+  }
+  const normalizedItems = items.map((raw) => {
+    const item = raw as Json;
+    return { product_id: numericId(item.product_id), quantity: Math.floor(Number(item.quantity)), unit_cost: money(item.unit_cost) };
+  });
+  if (normalizedItems.some((item) => !item.product_id || item.quantity < 1 || item.quantity > 100000 || item.unit_cost < 0)) {
+    return fail(400, "invalid_purchase_items", "Confira produto, quantidade e custo unitário de todos os itens.");
+  }
+  const { data, error } = await db.rpc("sisbar_register_purchase", {
+    p_company_id: session.company.id,
+    p_fridge_id: fridgeId,
+    p_supplier_id: supplierId,
+    p_invoice_number: text(body.invoice_number, 80),
+    p_purchase_date: purchaseDate,
+    p_due_date: dueDate,
+    p_payment_status: paymentStatus,
+    p_payment_method: paymentMethod,
+    p_notes: text(body.notes, 500),
+    p_items: normalizedItems,
+    p_admin_id: session.account.id,
+  });
+  if (error) {
+    console.error("purchase_create_failed", { company_id: session.company.id, message: error.message });
+    return fail(409, "purchase_failed", "Não foi possível registrar a entrada. Confira os dados e tente novamente.");
+  }
+  return respond(201, { ok: true, data });
+}
+
+async function purchaseMarkPaid(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const method = text(body.payment_method, 20);
+  if (!id || !["pix", "cash", "transfer", "card", "other"].includes(method)) return fail(400, "invalid_purchase_payment", "Informe a entrada e a forma de pagamento.");
+  const { data: pending } = await db.from("inventory_purchases").select("id, total").eq("id", id).eq("company_id", session.company.id).eq("status", "confirmed").eq("payment_status", "pending").maybeSingle();
+  if (!pending) return fail(409, "purchase_payment_failed", "Esta entrada não está pendente ou não foi encontrada.");
+  const { data, error } = await db.from("inventory_purchases").update({ payment_status: "paid", payment_method: method, paid_at: new Date().toISOString(), amount_paid: pending.total })
+    .eq("id", id).eq("company_id", session.company.id).eq("payment_status", "pending").select("id").maybeSingle();
+  if (error || !data) return fail(409, "purchase_payment_failed", "Esta entrada já foi alterada. Atualize a tela.");
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: "inventory_purchase_paid", entity_type: "inventory_purchase", entity_id: String(data.id), metadata: { method } });
+  return respond(200, { ok: true, data: { id: data.id, payment_status: "paid" } });
+}
+
+async function expensesList(req: Request) {
+  const session = await requireAdmin(req);
+  const { data, error } = await db.from("expenses").select("id, public_id, supplier_id, category, description, amount, competence_date, due_date, status, payment_method, paid_at, notes, created_at, suppliers(name)")
+    .eq("company_id", session.company.id).order("competence_date", { ascending: false }).limit(1000);
+  if (error) return fail(500, "expenses_failed", "Não foi possível carregar as despesas.");
+  return respond(200, { ok: true, data: { expenses: data ?? [] } });
+}
+
+async function expenseUpsert(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const description = text(body.description, 180).replace(/\s+/g, " ");
+  const category = text(body.category, 30);
+  const amount = money(body.amount);
+  const competenceDate = validDate(body.competence_date);
+  const dueDate = body.due_date ? validDate(body.due_date) : null;
+  const status = text(body.status, 20);
+  const method = text(body.payment_method, 20) || null;
+  const categories = ["mercadoria", "transporte", "energia", "manutencao", "taxas", "impostos", "marketing", "material", "outros"];
+  if (description.length < 2 || amount <= 0 || !competenceDate || !categories.includes(category) || !["pending", "paid"].includes(status) || (status === "paid" && !["pix", "cash", "transfer", "card", "other"].includes(String(method)))) {
+    return fail(400, "invalid_expense", "Confira descrição, categoria, valor, data e pagamento da despesa.");
+  }
+  const values = {
+    supplier_id: numericId(body.supplier_id), category, description, amount,
+    competence_date: competenceDate, due_date: dueDate, status,
+    payment_method: status === "paid" ? method : null,
+    paid_at: status === "paid" ? new Date().toISOString() : null,
+    notes: text(body.notes, 500) || null,
+  };
+  const query = id
+    ? db.from("expenses").update(values).eq("id", id).eq("company_id", session.company.id).neq("status", "cancelled").select("id, description, amount, status").maybeSingle()
+    : db.from("expenses").insert({ ...values, company_id: session.company.id, created_by: session.account.id }).select("id, description, amount, status").single();
+  const { data, error } = await query;
+  if (error || !data) return fail(id ? 404 : 500, "expense_failed", id ? "Despesa não encontrada ou já cancelada." : "Não foi possível cadastrar a despesa.");
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: id ? "expense_updated" : "expense_created", entity_type: "expense", entity_id: String(data.id), metadata: { amount, status } });
+  return respond(id ? 200 : 201, { ok: true, data });
+}
+
+async function expenseMarkPaid(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const method = text(body.payment_method, 20);
+  if (!id || !["pix", "cash", "transfer", "card", "other"].includes(method)) return fail(400, "invalid_expense_payment", "Informe a despesa e a forma de pagamento.");
+  const { data, error } = await db.from("expenses").update({ status: "paid", payment_method: method, paid_at: new Date().toISOString() })
+    .eq("id", id).eq("company_id", session.company.id).eq("status", "pending").select("id, amount").maybeSingle();
+  if (error || !data) return fail(409, "expense_payment_failed", "Esta despesa não está pendente ou não foi encontrada.");
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: "expense_paid", entity_type: "expense", entity_id: String(data.id), metadata: { method, amount: data.amount } });
+  return respond(200, { ok: true, data: { id: data.id, status: "paid" } });
+}
+
+async function expenseCancel(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const id = numericId(body.id);
+  const reason = text(body.reason, 300).replace(/\s+/g, " ");
+  if (!id || reason.length < 3) return fail(400, "invalid_expense_cancel", "Informe a despesa e o motivo do cancelamento.");
+  const { data, error } = await db.from("expenses").update({ status: "cancelled", notes: reason, payment_method: null, paid_at: null })
+    .eq("id", id).eq("company_id", session.company.id).neq("status", "cancelled").select("id, amount").maybeSingle();
+  if (error || !data) return fail(409, "expense_cancel_failed", "Esta despesa já foi cancelada ou não foi encontrada.");
+  await db.from("audit_logs").insert({ company_id: session.company.id, actor_account_id: session.account.id, action: "expense_cancelled", entity_type: "expense", entity_id: String(data.id), metadata: { reason, amount: data.amount } });
+  return respond(200, { ok: true, data: { id: data.id, status: "cancelled" } });
+}
+
+async function financeOverview(req: Request, body: Json) {
+  const session = await requireAdmin(req);
+  const range = monthRange(body.month);
+  if (!range) return fail(400, "invalid_month", "Informe um mês válido.");
+  const companyId = session.company.id;
+  const [salesResult, paymentsResult, expensesCompetenceResult, expensesPaidResult, purchasesMonthResult, purchasesPaidResult, openSalesResult, openExpensesResult, openPurchasesResult] = await Promise.all([
+    db.from("sales").select("id, total, payment_status, sale_items(cost_total)").eq("company_id", companyId).gte("sold_at", range.startTimestamp).lt("sold_at", range.endTimestamp).neq("payment_status", "cancelled"),
+    db.from("payments").select("id, amount, paid_at, method, employee_id").eq("company_id", companyId).gte("paid_at", range.startTimestamp).lt("paid_at", range.endTimestamp),
+    db.from("expenses").select("id, description, category, amount, status, competence_date").eq("company_id", companyId).gte("competence_date", range.startDate).lt("competence_date", range.endDate).neq("status", "cancelled"),
+    db.from("expenses").select("id, description, amount, paid_at, payment_method").eq("company_id", companyId).eq("status", "paid").gte("paid_at", range.startTimestamp).lt("paid_at", range.endTimestamp),
+    db.from("inventory_purchases").select("id, total, purchase_date, status").eq("company_id", companyId).gte("purchase_date", range.startDate).lt("purchase_date", range.endDate).eq("status", "confirmed"),
+    db.from("inventory_purchases").select("id, invoice_number, total, paid_at, payment_method").eq("company_id", companyId).eq("status", "confirmed").eq("payment_status", "paid").gte("paid_at", range.startTimestamp).lt("paid_at", range.endTimestamp),
+    db.from("sales").select("total, amount_paid").eq("company_id", companyId).in("payment_status", ["pending", "partial"]),
+    db.from("expenses").select("amount").eq("company_id", companyId).eq("status", "pending"),
+    db.from("inventory_purchases").select("total, amount_paid").eq("company_id", companyId).eq("status", "confirmed").eq("payment_status", "pending"),
+  ]);
+  const queryError = [salesResult, paymentsResult, expensesCompetenceResult, expensesPaidResult, purchasesMonthResult, purchasesPaidResult, openSalesResult, openExpensesResult, openPurchasesResult].find((result) => result.error)?.error;
+  if (queryError) {
+    console.error("finance_overview_failed", { company_id: companyId, message: queryError.message });
+    return fail(500, "finance_failed", "Não foi possível calcular o painel financeiro.");
+  }
+
+  const sales = salesResult.data ?? [];
+  const revenue = money(sales.reduce((sum, sale) => sum + money(sale.total), 0));
+  const cogs = money(sales.reduce((sum, sale) => sum + ((sale.sale_items ?? []) as Json[]).reduce((itemSum, item) => itemSum + money(item.cost_total), 0), 0));
+  const operatingExpenses = money((expensesCompetenceResult.data ?? []).reduce((sum, expense) => sum + money(expense.amount), 0));
+  const cashIn = money((paymentsResult.data ?? []).reduce((sum, payment) => sum + money(payment.amount), 0));
+  const expensesCashOut = money((expensesPaidResult.data ?? []).reduce((sum, expense) => sum + money(expense.amount), 0));
+  const purchasesCashOut = money((purchasesPaidResult.data ?? []).reduce((sum, purchase) => sum + money(purchase.total), 0));
+  const stockPurchases = money((purchasesMonthResult.data ?? []).reduce((sum, purchase) => sum + money(purchase.total), 0));
+  const accountsReceivable = money((openSalesResult.data ?? []).reduce((sum, sale) => sum + money(sale.total) - money(sale.amount_paid), 0));
+  const accountsPayable = money((openExpensesResult.data ?? []).reduce((sum, expense) => sum + money(expense.amount), 0) + (openPurchasesResult.data ?? []).reduce((sum, purchase) => sum + money(purchase.total) - money(purchase.amount_paid), 0));
+  const categoryMap = new Map<string, number>();
+  for (const expense of expensesCompetenceResult.data ?? []) categoryMap.set(String(expense.category), money((categoryMap.get(String(expense.category)) ?? 0) + money(expense.amount)));
+  const cashFlow = [
+    ...(paymentsResult.data ?? []).map((payment) => ({ id: `payment-${payment.id}`, date: payment.paid_at, type: "inflow", description: "Recebimento de vendas", method: payment.method, amount: money(payment.amount) })),
+    ...(expensesPaidResult.data ?? []).map((expense) => ({ id: `expense-${expense.id}`, date: expense.paid_at, type: "outflow", description: expense.description, method: expense.payment_method, amount: -money(expense.amount) })),
+    ...(purchasesPaidResult.data ?? []).map((purchase) => ({ id: `purchase-${purchase.id}`, date: purchase.paid_at, type: "outflow", description: purchase.invoice_number ? `Compra NF ${purchase.invoice_number}` : "Compra de mercadorias", method: purchase.payment_method, amount: -money(purchase.total) })),
+  ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const grossProfit = money(revenue - cogs);
+  const netProfit = money(grossProfit - operatingExpenses);
+  return respond(200, { ok: true, data: {
+    month: range.month,
+    metrics: { revenue, cogs, gross_profit: grossProfit, operating_expenses: operatingExpenses, net_profit: netProfit, gross_margin: revenue > 0 ? money(grossProfit / revenue * 100) : 0, cash_in: cashIn, cash_out: money(expensesCashOut + purchasesCashOut), cash_result: money(cashIn - expensesCashOut - purchasesCashOut), stock_purchases: stockPurchases, accounts_receivable: accountsReceivable, accounts_payable: accountsPayable },
+    expense_breakdown: [...categoryMap].map(([category, amount]) => ({ category, amount })).sort((a, b) => b.amount - a.amount),
+    cash_flow: cashFlow,
+  } });
+}
+
 async function monthlyReport(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const month = text(body.month, 7);
@@ -857,6 +1081,16 @@ Deno.serve(async (req: Request) => {
       case "sale_cancel": return await saleCancel(req, body);
       case "receivables": return await receivables(req);
       case "record_payment": return await recordPayment(req, body);
+      case "finance_overview": return await financeOverview(req, body);
+      case "suppliers_list": return await suppliersList(req);
+      case "supplier_upsert": return await supplierUpsert(req, body);
+      case "purchases_list": return await purchasesList(req);
+      case "purchase_create": return await purchaseCreate(req, body);
+      case "purchase_mark_paid": return await purchaseMarkPaid(req, body);
+      case "expenses_list": return await expensesList(req);
+      case "expense_upsert": return await expenseUpsert(req, body);
+      case "expense_mark_paid": return await expenseMarkPaid(req, body);
+      case "expense_cancel": return await expenseCancel(req, body);
       case "monthly_report": return await monthlyReport(req, body);
       case "settings_update": return await settingsUpdate(req, body);
       default: return fail(404, "action_not_found", "Ação não encontrada.");

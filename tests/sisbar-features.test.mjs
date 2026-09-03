@@ -110,3 +110,24 @@ test("PWA assets support Android and iOS installation", async () => {
   assert.match(installer, /beforeinstallprompt/);
   assert.match(installer, /Adicionar à Tela de Início/);
 });
+
+test("financial management covers purchases, costs, expenses and profit", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  const finance = await source("app/finance-dashboard.tsx");
+  const api = await source("supabase/functions/sisbar-api/index.ts");
+  const migration = await source("supabase/migrations/20260903093000_add_financial_management.sql");
+  assert.match(admin, /Gestão financeira/);
+  assert.match(finance, /Lucro bruto/);
+  assert.match(finance, /Lucro líquido/);
+  assert.match(finance, /Entradas de estoque/);
+  assert.match(finance, /Fornecedores/);
+  assert.match(finance, /Fluxo de caixa realizado/);
+  assert.match(api, /finance_overview/);
+  assert.match(api, /purchase_create/);
+  assert.match(api, /expense_cancel/);
+  assert.match(migration, /create table public\.inventory_purchases/);
+  assert.match(migration, /create table public\.expenses/);
+  assert.match(migration, /create or replace function public\.sisbar_register_purchase/);
+  assert.match(migration, /unit_cost numeric/);
+  assert.match(migration, /cost_total numeric/);
+});

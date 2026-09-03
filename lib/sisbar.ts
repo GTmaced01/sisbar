@@ -39,7 +39,7 @@ export type Account = {
   must_change_pin?: boolean;
 };
 export type Session = { token: string; expires_at: string; account: Account; company: Company };
-export type SaleItem = { product_id?: number; product_name: string; unit_price: number; quantity: number; subtotal: number };
+export type SaleItem = { product_id?: number; product_name: string; unit_price: number; unit_cost?: number; quantity: number; subtotal: number; cost_total?: number };
 export type Sale = {
   id: number;
   public_id: string;
