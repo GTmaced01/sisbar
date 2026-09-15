@@ -1,93 +1,151 @@
-# vinext-starter
+# SISBAR
 
-A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
+**Sistema Integrado de Bar** para controle de vendas, estoque, usuários e gestão financeira de bebidas e produtos não alcoólicos.
 
-## Prerequisites
+O projeto foi criado para substituir registros manuais por um fluxo digital simples para o usuário e completo para a administração.
 
-- Node.js `>=22.13.0`
-- Linux with `flock`, `curl`, and GNU `timeout`
+## Visão geral
 
-## Sites Lifecycle
+O SISBAR possui duas experiências integradas:
 
-The Sites lifecycle CLI runs the locked dependency install before returning this checkout. Edit the source under `app/`, then checkpoint when a coherent milestone is ready to inspect or share. The remote Sites builder runs `npm run build` against the pushed commit. Do not repeat install or build as a normal pre-checkpoint step.
+- uma loja para consulta do catálogo, registro de retirada e acompanhamento do próprio extrato;
+- um painel administrativo para gestão de vendas, recebimentos, estoque, usuários, relatórios e finanças.
 
-This starter does not use `wrangler.jsonc`.
+A aplicação é responsiva e instalável como PWA em Android e iOS.
 
-`install:ci` is intentionally a single, non-retrying `npm ci`. It refuses a concurrent install for the same project, consumes a matching image-seeded npm cache with `--prefer-offline` while retaining registry fallback for a missing cache object, otherwise downloads and verifies the complete vinext tarball recorded in `package-lock.json`, limits npm to one socket, and terminates a stalled install. `build` applies a short timeout. These helpers target Linux and use GNU `timeout`; they are not native macOS scripts.
+## Principais funcionalidades
 
-Scripts that need writable project-scoped home, npm, XDG, and temporary paths use `scripts/sites-env.sh`. The `dev` and `start` scripts honor the caller's runtime environment and keep Wrangler logs inside the checkout. The generated `.sites-runtime/` directory is disposable and ignored by Git.
+### Loja e usuários
 
-## Included Shape
+- catálogo por categorias e disponibilidade em estoque;
+- carrinho com limite baseado na quantidade disponível;
+- registro de retirada e atualização imediata do estoque;
+- pagamento imediato ou lançamento para pagamento posterior;
+- cadastro e autenticação por matrícula e PIN;
+- perfil com nome, OM, ramal e telefone;
+- extrato individual, saldo e histórico de compras;
+- comprovante após a conclusão da retirada;
+- instalação como aplicativo pelo navegador.
 
-- edit site code under `app/`
-- `app/chatgpt-auth.ts` provides optional dispatch-owned ChatGPT sign-in helpers
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/index.ts` reads the D1 binding from the Cloudflare Worker environment
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+### Administração
 
-## Workspace Auth Headers
+- visão geral de vendas, recebimentos e estoque baixo;
+- acompanhamento de vendas pendentes, parciais, pagas e canceladas;
+- contas a receber por usuário;
+- cadastro, edição, ativação e remoção controlada de produtos;
+- imagens de produtos com validação e otimização;
+- entrada e ajuste de estoque;
+- cadastro e administração de usuários;
+- venda manual pelo administrador;
+- cancelamento auditável de vendas com devolução ao estoque;
+- relatório mensal e exportação em CSV;
+- QR Code e configurações da operação.
 
-OpenAI workspace sites can read the current user's email from `oai-authenticated-user-email`.
+### Gestão financeira
 
-SIWC-authenticated workspace sites may also receive `oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty `name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by `oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+- cadastro de fornecedores;
+- registro de compras e custo unitário dos produtos;
+- controle de despesas;
+- contas pagas e pendentes;
+- fluxo de caixa realizado;
+- acompanhamento de faturamento;
+- cálculo de lucro bruto e lucro líquido;
+- histórico de lançamentos e cancelamentos.
 
-Treat the full name as optional and fall back to email when it is absent:
+## Tecnologias
 
-```tsx
-import { headers } from "next/headers";
+- **Next.js 16**
+- **React 19**
+- **TypeScript**
+- **Tailwind CSS**
+- **shadcn/ui e Base UI**
+- **Supabase**
+  - PostgreSQL
+  - Storage
+  - Edge Functions
+  - funções transacionais
+- **Vinext e Vite**
+- **Cloudflare Workers**
+- **Progressive Web App**
+- **Node.js Test Runner**
 
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
+## Arquitetura e segurança
 
-  const displayName = fullName ?? email;
-  // ...
-}
+O frontend consome uma API central implementada como Supabase Edge Function. As ações sensíveis são validadas no servidor antes de acessar o banco.
+
+O projeto inclui:
+
+- sessões com tokens armazenados de forma hash no banco;
+- PIN armazenado com hash;
+- bloqueio temporário após tentativas inválidas;
+- separação entre usuário e administrador;
+- validação de autorização nas operações administrativas;
+- rotinas transacionais para venda, estoque e cadastro de produtos;
+- cancelamento de venda com restauração de estoque;
+- registros de auditoria;
+- validação de tipo e tamanho das imagens;
+- uso de chave pública no frontend e chave privilegiada somente no servidor.
+
+A chave pública do Supabase pode estar no cliente. A \`service_role\` ou qualquer chave secreta deve permanecer exclusivamente no ambiente protegido da Edge Function.
+
+## Execução local
+
+### Pré-requisitos
+
+- Node.js 22.13 ou superior;
+- npm;
+- projeto Supabase configurado;
+- Edge Function \`sisbar-api\` publicada.
+
+### Instalação
+
+```bash
+git clone https://github.com/GTmaced01/sisbar.git
+cd sisbar
+npm ci
+npm run dev
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+A configuração do backend está em \`supabase/\`. Credenciais privadas não devem ser adicionadas ao repositório.
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs optional or required ChatGPT sign-in:
+## Validação
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send anonymous visitors through Sign in with ChatGPT.
-- In a Server Component, start sign-in with `<a href={chatGPTSignInPath(returnTo)} target="_top">`. The auth helper module is server-only; do not import it into a Client Component.
-- Do not use `fetch`, XHR, a client-side router, or a framework link that can prefetch the sign-in route. SIWC must start as a top-level navigation.
-- Never request the AuthAPI authorization endpoint directly. The dispatch-owned `/signin-with-chatgpt` route must start the SIWC flow.
-- Use `chatGPTSignOutPath(returnTo)` for browser sign-out links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because they depend on per-request identity headers.
+```bash
+npm run lint
+npm test
+npm run build
+```
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the OAuth cookies, and identity header injection. Do not implement app routes for those reserved paths. Routes that do not import and call the helper remain anonymous-compatible.
+## Estrutura principal
 
-SIWC establishes identity only; it does not prove workspace membership. Use the Sites hosting platform's access policy controls for workspace-wide restrictions, or enforce explicit server-side membership or allowlist checks.
+```text
+app/
+  employee-store.tsx     loja e área do usuário
+  admin-dashboard.tsx    administração
+  finance-dashboard.tsx  gestão financeira
+components/              componentes de interface e PWA
+lib/                     cliente da API e tipos
+supabase/
+  functions/sisbar-api/  API da aplicação
+  migrations/            evolução do banco
+tests/                   testes automatizados
+worker/                  entrada para Cloudflare Workers
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write actions tied to the current ChatGPT user. Leave public content anonymous.
+## PWA
 
-## Diagnostic Commands
+O projeto inclui manifest, service worker, ícones para Android e iOS e uma interface de instalação. Em navegadores compatíveis, o SISBAR pode ser adicionado à tela inicial e executado em modo independente.
 
-- `npm run install:ci`: perform the one bounded lockfile install
-- `npm run dev`: start the Vite/Vinext development server
-- `npm run build`: build the deployable Sites artifact
-- `npm run start`: start the built Vinext application
-- `npm test`: build and verify the rendered development-preview metadata
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+## Status
 
-Use build commands for targeted diagnosis after a remote failure, not as part of the normal checkpoint path.
+Projeto em desenvolvimento ativo. A implantação e a infraestrutura devem ser validadas antes do uso em produção.
 
-The timeout defaults can be overridden for a controlled canary with `SITES_INSTALL_TIMEOUT`, `SITES_INSTALL_KILL_AFTER`, `SITES_BUILD_TIMEOUT`, and `SITES_BUILD_KILL_AFTER`. A timeout fails the command; the helpers never retry an unchanged install or build.
+## Autor
 
-## Learn More
+Desenvolvido por [Gustavo Medeiros](https://github.com/GTmaced01).
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+## Uso do código
+
+Este projeto **não é open source**. O código é disponibilizado publicamente para demonstração e avaliação técnica de portfólio, sem concessão de licença para uso, modificação, redistribuição ou exploração comercial.
+
+Contribuições externas não são aceitas no momento. Todos os direitos reservados ao autor.
