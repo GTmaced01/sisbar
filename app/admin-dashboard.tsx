@@ -10,6 +10,7 @@ import {
   BarChart3,
   Boxes,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   ClipboardCheck,
@@ -233,6 +234,16 @@ export function AdminDashboard({ onOpenStore }: { onOpenStore: () => void }) {
     if (view !== "dashboard") void sisbarApi<DashboardData>("dashboard", {}, session.token).then(setDashboard);
   }
 
+  useEffect(() => {
+    if (!session) return;
+    const handleSaleCreated = () => {
+      void loadView(view, session);
+      if (view !== "dashboard") void sisbarApi<DashboardData>("dashboard", {}, session.token).then(setDashboard);
+    };
+    window.addEventListener("sisbar:admin-sale-created", handleSaleCreated);
+    return () => window.removeEventListener("sisbar:admin-sale-created", handleSaleCreated);
+  }, [loadView, session, view]);
+
   function navigate(target: AdminView) {
     setView(target);
     setMobileMenuOpen(false);
@@ -445,10 +456,12 @@ function SalesSection({ sales, session, onCancelled }: { sales: Sale[]; session:
 }
 
 function SalesTable({ sales, compact = false, onCancel }: { sales: Sale[]; compact?: boolean; onCancel?: (sale: Sale) => void }) {
-  return <><div className="divide-y divide-slate-100 md:hidden">{sales.map((sale) => { const items = sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"; const canCancel = Boolean(onCancel) && sale.payment_status !== "cancelled" && Number(sale.amount_paid) === 0; return <article key={sale.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{sale.employee?.full_name ?? "Usuário"}</p><p className="mt-0.5 text-xs text-slate-500">{sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`}</p></div><StatusBadge status={sale.payment_status} /></div><p className="mt-3 text-xs text-slate-500">{fullDate.format(new Date(sale.sold_at))}</p>{!compact && <p className={`mt-2 text-sm leading-5 ${sale.payment_status === "cancelled" ? "text-slate-400 line-through" : "text-slate-700"}`}>{items}</p>}<div className="mt-3 flex items-center justify-between gap-3"><p className="text-base font-bold text-[#102a43]">{brl.format(sale.total)}</p>{canCancel ? <Button variant="outline" size="sm" className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => onCancel?.(sale)}><XCircle /> Cancelar</Button> : onCancel ? <span className="text-xs text-slate-400">Sem ações disponíveis</span> : null}</div></article>; })}</div><div className="hidden min-w-0 md:block"><Table className={compact ? "min-w-[560px]" : "min-w-[820px]"}><TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Data</TableHead>{!compact && <TableHead>Itens</TableHead>}<TableHead>Status</TableHead><TableHead className="text-right">Total</TableHead>{onCancel && <TableHead className="text-right">Ações</TableHead>}</TableRow></TableHeader><TableBody>{sales.map((sale) => <TableRow key={sale.id}><TableCell><p className="font-medium">{sale.employee?.full_name ?? "Usuário"}</p><p className="text-xs text-slate-500">{sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`}</p></TableCell><TableCell className="text-slate-600">{fullDate.format(new Date(sale.sold_at))}</TableCell>{!compact && <TableCell className="max-w-72 truncate text-slate-600">{sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "—"}</TableCell>}<TableCell><StatusBadge status={sale.payment_status} /></TableCell><TableCell className="text-right font-semibold">{brl.format(sale.total)}</TableCell>{onCancel && <TableCell className="text-right">{sale.payment_status !== "cancelled" && Number(sale.amount_paid) === 0 ? <Button variant="ghost" size="sm" className="text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => onCancel(sale)}><XCircle /> Cancelar</Button> : <span className="text-xs text-slate-400">—</span>}</TableCell>}</TableRow>)}</TableBody></Table></div></>;
+  return <><div className="divide-y divide-slate-100 md:hidden">{sales.map((sale) => { const items = sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "Retirada"; const identity = sale.employee?.is_quick_profile ? "Cadastro rápido" : sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`; const canCancel = Boolean(onCancel) && sale.payment_status !== "cancelled" && Number(sale.amount_paid) === 0; return <article key={sale.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-sm font-semibold">{sale.employee?.full_name ?? "Usuário"}</p><p className="mt-0.5 text-xs text-slate-500">{identity}</p></div><StatusBadge status={sale.payment_status} /></div><p className="mt-3 text-xs text-slate-500">{fullDate.format(new Date(sale.sold_at))}</p>{!compact && <p className={`mt-2 text-sm leading-5 ${sale.payment_status === "cancelled" ? "text-slate-400 line-through" : "text-slate-700"}`}>{items}</p>}<div className="mt-3 flex items-center justify-between gap-3"><p className="text-base font-bold text-[#102a43]">{brl.format(sale.total)}</p>{canCancel ? <Button variant="outline" size="sm" className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => onCancel?.(sale)}><XCircle /> Cancelar</Button> : onCancel ? <span className="text-xs text-slate-400">Sem ações disponíveis</span> : null}</div></article>; })}</div><div className="hidden min-w-0 md:block"><Table className={compact ? "min-w-[560px]" : "min-w-[820px]"}><TableHeader><TableRow><TableHead>Usuário</TableHead><TableHead>Data</TableHead>{!compact && <TableHead>Itens</TableHead>}<TableHead>Status</TableHead><TableHead className="text-right">Total</TableHead>{onCancel && <TableHead className="text-right">Ações</TableHead>}</TableRow></TableHeader><TableBody>{sales.map((sale) => <TableRow key={sale.id}><TableCell><p className="font-medium">{sale.employee?.full_name ?? "Usuário"}</p><p className="text-xs text-slate-500">{sale.employee?.is_quick_profile ? "Cadastro rápido" : sale.employee?.enrollment ?? `#${sale.public_id.slice(0, 8)}`}</p></TableCell><TableCell className="text-slate-600">{fullDate.format(new Date(sale.sold_at))}</TableCell>{!compact && <TableCell className="max-w-72 truncate text-slate-600">{sale.items?.map((item) => `${item.quantity}x ${item.product_name}`).join(", ") || "—"}</TableCell>}<TableCell><StatusBadge status={sale.payment_status} /></TableCell><TableCell className="text-right font-semibold">{brl.format(sale.total)}</TableCell>{onCancel && <TableCell className="text-right">{sale.payment_status !== "cancelled" && Number(sale.amount_paid) === 0 ? <Button variant="ghost" size="sm" className="text-rose-700 hover:bg-rose-50 hover:text-rose-800" onClick={() => onCancel(sale)}><XCircle /> Cancelar</Button> : <span className="text-xs text-slate-400">—</span>}</TableCell>}</TableRow>)}</TableBody></Table></div></>;
 }
 
 function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | null; onPay: (employee: Employee) => void; company: Company }) {
+  const [expandedEmployeeId, setExpandedEmployeeId] = useState<number | null>(null);
+
   function whatsapp(employee: Employee) {
     if (!digitsOnly(employee.phone)) { toast.error("Cadastre o WhatsApp deste usuário primeiro."); return; }
     const due = employee.sales?.slice(0, 12).map((sale) => {
@@ -458,7 +471,34 @@ function ReceivablesSection({ data, onPay, company }: { data: ReceivablesData | 
     const message = `Olá, ${employee.full_name.split(" ")[0]}! Segue seu extrato do ${company.name}:\n${due}\n\nSaldo em aberto: *${brl.format(employee.balance)}*.${company.pix_key ? `\nChave Pix: ${company.pix_key}` : ""}\nObrigado!`;
     window.open(`https://wa.me/55${digitsOnly(employee.phone)}?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
   }
-  return <><SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Saldos em aberto agrupados por usuário." /><Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card><div className="space-y-3">{data?.receivables.length ? data.receivables.map((employee) => <Card key={employee.id} className="min-w-0 gap-0 border-slate-200 py-0 shadow-none"><CardContent className="grid min-w-0 gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5 xl:grid-cols-[minmax(0,1fr)_auto_auto]"><div className="flex min-w-0 items-center gap-3"><div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div><div className="min-w-0"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 break-words text-xs leading-5 text-slate-500">OM {employee.organization_unit || "Não informada"} · Matrícula {employee.enrollment} · {employee.open_sales} {employee.open_sales === 1 ? "venda" : "vendas"}</p></div></div><div className="flex items-end justify-between gap-3 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div><div className="grid min-w-0 grid-cols-2 gap-2 sm:col-span-2 xl:col-span-1 xl:flex xl:justify-end"><Button variant="outline" size="sm" className="min-w-0" onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="min-w-0 bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div></CardContent></Card>) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}</div></>;
+  return <>
+    <SectionTitle eyebrow="Financeiro" title="Contas a receber" description="Clique em uma pessoa para conferir cada retirada e os respectivos itens." />
+    <Card className="mb-5 gap-0 border-0 bg-[#102a43] py-0 text-white shadow-none"><CardContent className="flex flex-col justify-between gap-3 p-5 sm:flex-row sm:items-center sm:p-6"><div><p className="text-sm text-slate-300">Total em aberto</p><p className="mt-1 text-3xl font-bold">{brl.format(data?.total ?? 0)}</p></div><div className="flex items-center gap-2 text-sm text-slate-300"><Users className="size-4" /> {data?.receivables.length ?? 0} pessoas com saldo</div></CardContent></Card>
+    <div className="space-y-3">
+      {data?.receivables.length ? data.receivables.map((employee) => {
+        const expanded = expandedEmployeeId === employee.id;
+        return <Card key={employee.id} className="min-w-0 gap-0 overflow-hidden border-slate-200 py-0 shadow-none">
+          <CardContent className="p-0">
+            <div className="grid min-w-0 gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:p-5 xl:grid-cols-[minmax(0,1fr)_auto_auto]">
+              <button type="button" className="flex min-w-0 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-[#ef7d22]" aria-expanded={expanded} onClick={() => setExpandedEmployeeId(expanded ? null : employee.id)}>
+                <div className="grid size-10 shrink-0 place-items-center rounded-full bg-slate-100 font-semibold text-[#102a43]">{employee.full_name.slice(0, 1)}</div>
+                <div className="min-w-0 flex-1"><p className="truncate font-semibold">{employee.full_name}</p><p className="mt-0.5 break-words text-xs leading-5 text-slate-500">{employee.is_quick_profile ? "Cadastro rápido" : `OM ${employee.organization_unit || "Não informada"} · Matrícula ${employee.enrollment}`} · {employee.open_sales} {employee.open_sales === 1 ? "retirada" : "retiradas"}</p></div>
+                <ChevronDown className={`size-4 shrink-0 text-slate-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              </button>
+              <div className="flex items-end justify-between gap-3 sm:block sm:text-right"><div><p className="text-xs text-slate-500">Saldo</p><p className="text-xl font-bold">{brl.format(employee.balance)}</p></div></div>
+              <div className="grid min-w-0 grid-cols-2 gap-2 sm:col-span-2 xl:col-span-1 xl:flex xl:justify-end"><Button variant="outline" size="sm" className="min-w-0" disabled={!digitsOnly(employee.phone)} onClick={() => whatsapp(employee)}><MessageCircle /> Cobrar</Button><Button size="sm" className="min-w-0 bg-[#102a43] hover:bg-[#173d5f]" onClick={() => onPay(employee)}><Banknote /> Dar baixa</Button></div>
+            </div>
+            {expanded && <div className="border-t border-slate-100 bg-slate-50/70 p-4 sm:p-5">
+              <div className="space-y-3">{employee.sales?.map((sale) => <div key={sale.id} className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-sm font-semibold">Retirada de {fullDate.format(new Date(sale.sold_at))}</p><p className="mt-0.5 text-xs text-slate-500">{sale.payment_status === "partial" ? `Pago ${brl.format(sale.amount_paid)} de ${brl.format(sale.total)}` : "Pagamento em aberto"}</p></div><p className="font-bold text-[#102a43]">{brl.format(sale.total - sale.amount_paid)}</p></div>
+                <div className="mt-3 divide-y divide-slate-100 rounded-lg bg-slate-50 px-3">{sale.items?.map((item) => <div key={`${sale.id}-${item.product_id}-${item.product_name}`} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{item.quantity}x {item.product_name}</span><span className="shrink-0 font-medium">{brl.format(item.subtotal)}</span></div>)}</div>
+              </div>)}</div>
+            </div>}
+          </CardContent>
+        </Card>;
+      }) : <EmptyState icon={CheckCircle2} title="Tudo em dia" text="Não há contas a receber no momento." />}
+    </div>
+  </>;
 }
 
 function ProductsSection({ data, onNew, onEdit, onStock, onToggleActive, onDelete }: { data: ProductsData | null; onNew: () => void; onEdit: (product: Product) => void; onStock: (product: Product) => void; onToggleActive: (product: Product) => void; onDelete: (product: Product) => void }) {

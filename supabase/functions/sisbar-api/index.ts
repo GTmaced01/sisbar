@@ -168,6 +168,11 @@ function randomToken() {
   return Array.from(bytes).map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
+function bearerToken(req: Request) {
+  const header = req.headers.get("Authorization") ?? "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+
 async function hashPin(pin: string) {
   const { data, error } = await db.rpc("sisbar_hash_pin", { p_pin: pin });
   if (error || !data) throw new Error("pin_hash_failed");
@@ -181,8 +186,7 @@ async function verifyPin(pin: string, hash: string) {
 }
 
 async function loadSession(req: Request): Promise<SessionContext | null> {
-  const header = req.headers.get("Authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const token = bearerToken(req);
   if (!token || token.length !== 64) return null;
 
   const tokenHash = await sha256(token);
@@ -502,7 +506,7 @@ async function loadSales(companyId: number, limit = 100, start?: string, end?: s
   const saleIds = saleRows.map((sale) => Number(sale.id));
   const [{ data: employees }, { data: items }] = await Promise.all([
     employeeIds.length
-      ? db.from("accounts").select("id, full_name, enrollment, organization_unit, extension, phone").in("id", employeeIds)
+      ? db.from("accounts").select("id, full_name, enrollment, organization_unit, extension, phone, is_quick_profile").in("id", employeeIds)
       : Promise.resolve({ data: [] }),
     saleIds.length
       ? db.from("sale_items").select("sale_id, product_id, product_name, unit_price, quantity, subtotal").in("sale_id", saleIds)
@@ -524,7 +528,7 @@ async function dashboard(req: Request) {
   const [sales, inventoryResult, employeesResult] = await Promise.all([
     loadSales(session.company.id, 2000, monthStart),
     db.from("inventory").select("quantity, min_quantity, product_id").eq("company_id", session.company.id),
-    db.from("accounts").select("id", { count: "exact", head: true }).eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
+    db.from("accounts").select("id", { count: "exact", head: true }).eq("company_id", session.company.id).eq("role", "employee").eq("active", true).eq("is_quick_profile", false),
   ]);
   const validSales = sales.filter((sale) => sale.payment_status !== "cancelled");
   const sold = validSales.reduce((sum, sale) => sum + money(sale.total), 0);
@@ -695,7 +699,7 @@ async function stockAdjust(req: Request, body: Json) {
 async function employeesList(req: Request) {
   const session = await requireAdmin(req);
   const [{ data: employees }, { data: openSales }] = await Promise.all([
-    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone, active, created_at").eq("company_id", session.company.id).eq("role", "employee").order("full_name"),
+    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone, active, created_at, is_quick_profile").eq("company_id", session.company.id).eq("role", "employee").eq("is_quick_profile", false).order("full_name"),
     db.from("sales").select("employee_id, total, amount_paid, sold_at").eq("company_id", session.company.id).in("payment_status", ["pending", "partial"]),
   ]);
   const balances = new Map<number, { balance: number; openSales: number; lastPurchase: string | null }>();
@@ -753,6 +757,54 @@ async function salesList(req: Request) {
   return respond(200, { ok: true, data: { sales: await loadSales(session.company.id, 200) } });
 }
 
+async function adminCheckout(req: Request, body: Json) {
+  await requireAdmin(req);
+  const token = bearerToken(req);
+  const fridgeId = numericId(body.fridge_id);
+  const employeeId = numericId(body.employee_id);
+  const customerMode = text(body.customer_mode, 20) === "registered" ? "registered" : "quick";
+  const customerName = text(body.customer_name, 140).replace(/\s+/g, " ");
+  const paymentOption = text(body.payment_option, 20);
+  const paymentMethod = paymentOption === "immediate" ? text(body.payment_method, 20) : null;
+  const rawItems = Array.isArray(body.items) ? body.items : [];
+  const items = rawItems.map((item) => {
+    const value = item as Json;
+    return { product_id: numericId(value.product_id), quantity: Number(value.quantity) };
+  }).filter((item) => item.product_id && Number.isInteger(item.quantity) && item.quantity > 0 && item.quantity <= 50);
+
+  if (!fridgeId || items.length !== rawItems.length || items.length < 1 || !["immediate", "later"].includes(paymentOption)) {
+    return fail(400, "invalid_sale", "Confira os itens, o estoque e a forma de pagamento.");
+  }
+  if (customerMode === "registered" && !employeeId) {
+    return fail(400, "invalid_employee", "Selecione uma pessoa cadastrada.");
+  }
+  if (customerMode === "quick" && customerName.length < 2) {
+    return fail(400, "invalid_customer_name", "Informe o nome da pessoa.");
+  }
+  if (paymentOption === "immediate" && !["pix", "cash", "transfer"].includes(paymentMethod ?? "")) {
+    return fail(400, "invalid_payment_method", "Selecione a forma de pagamento.");
+  }
+
+  const rpc = customerMode === "registered" ? "sisbar_admin_create_sale" : "sisbar_admin_create_quick_sale";
+  const params = customerMode === "registered"
+    ? { p_token: token, p_employee_id: employeeId, p_fridge_id: fridgeId, p_payment_option: paymentOption, p_payment_method: paymentMethod, p_items: items }
+    : { p_token: token, p_customer_name: customerName, p_fridge_id: fridgeId, p_payment_option: paymentOption, p_payment_method: paymentMethod, p_items: items };
+  const { data, error } = await db.rpc(rpc, params);
+  if (error) {
+    const message = error.message.includes("insufficient_stock")
+      ? "Estoque insuficiente para um dos produtos."
+      : error.message.includes("product_unavailable")
+        ? "Um dos produtos não está mais disponível."
+        : error.message.includes("invalid_employee")
+          ? "A pessoa selecionada não está disponível."
+          : error.message.includes("invalid_customer_name")
+            ? "Informe um nome válido."
+            : "Não foi possível registrar a saída.";
+    return fail(409, "admin_sale_failed", message);
+  }
+  return respond(201, { ok: true, data });
+}
+
 async function saleCancel(req: Request, body: Json) {
   const session = await requireAdmin(req);
   const saleId = numericId(body.sale_id);
@@ -780,7 +832,7 @@ async function saleCancel(req: Request, body: Json) {
 async function receivables(req: Request) {
   const session = await requireAdmin(req);
   const [{ data: employees }, sales] = await Promise.all([
-    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
+    db.from("accounts").select("id, enrollment, full_name, organization_unit, extension, phone, is_quick_profile").eq("company_id", session.company.id).eq("role", "employee").eq("active", true),
     loadSales(session.company.id, 5000),
   ]);
   const open = sales.filter((sale) => ["pending", "partial"].includes(String(sale.payment_status)));
@@ -1110,6 +1162,7 @@ Deno.serve(async (req: Request) => {
       case "employees_list": return await employeesList(req);
       case "employee_upsert": return await employeeUpsert(req, body);
       case "sales_list": return await salesList(req);
+      case "admin_checkout": return await adminCheckout(req, body);
       case "sale_cancel": return await saleCancel(req, body);
       case "receivables": return await receivables(req);
       case "record_payment": return await recordPayment(req, body);
