@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Banknote, Plus, ShoppingCart, X } from "lucide-react";
+import { Banknote, Plus, Search, ShoppingCart, UserRoundPlus, Users, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { brl, Employee, Fridge, Product, SISBAR_API_URL, SISBAR_PUBLISHABLE_KEY, sisbarApi } from "@/lib/sisbar";
+import { brl, Employee, Fridge, Product, sisbarApi } from "@/lib/sisbar";
 
 type ProductsData = { products: Product[]; fridges: Fridge[] };
 type EmployeesData = { employees: Employee[] };
 type Cart = Record<number, number>;
+type CustomerMode = "quick" | "registered";
 
 const ADMIN_SESSION = "sisbar.admin.session";
 
@@ -39,10 +40,13 @@ export function AdminManualSale() {
   const [saving, setSaving] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [productsData, setProductsData] = useState<ProductsData | null>(null);
+  const [customerMode, setCustomerMode] = useState<CustomerMode>("quick");
+  const [customerName, setCustomerName] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [fridgeId, setFridgeId] = useState("");
   const [paymentOption, setPaymentOption] = useState<"later" | "immediate">("later");
   const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [productSearch, setProductSearch] = useState("");
   const [cart, setCart] = useState<Cart>({});
 
   useEffect(() => {
@@ -54,6 +58,10 @@ export function AdminManualSale() {
   }, []);
 
   const availableProducts = useMemo(() => (productsData?.products ?? []).filter((product) => product.active !== false), [productsData]);
+  const visibleProducts = useMemo(() => {
+    const term = productSearch.trim().toLocaleLowerCase("pt-BR");
+    return term ? availableProducts.filter((product) => `${product.name} ${product.category} ${product.sku ?? ""}`.toLocaleLowerCase("pt-BR").includes(term)) : availableProducts;
+  }, [availableProducts, productSearch]);
   const total = useMemo(() => availableProducts.reduce((sum, product) => sum + Number(product.sale_price) * (cart[product.id] ?? 0), 0), [availableProducts, cart]);
   const itemCount = useMemo(() => Object.values(cart).reduce((sum, quantity) => sum + quantity, 0), [cart]);
 
@@ -75,7 +83,7 @@ export function AdminManualSale() {
       setEmployeeId((current) => current || String(activeEmployees[0]?.id ?? ""));
       setFridgeId((current) => current || String(productData.fridges.find((fridge) => fridge.active !== false)?.id ?? productData.fridges[0]?.id ?? ""));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível carregar os dados da venda.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível carregar os dados da saída.");
     } finally {
       setLoading(false);
     }
@@ -106,39 +114,30 @@ export function AdminManualSale() {
     const session = readAdminSession();
     if (!session?.token) return toast.error("Sua sessão administrativa expirou. Entre novamente.");
     const items = Object.entries(cart).map(([productId, quantity]) => ({ product_id: Number(productId), quantity }));
-    if (!employeeId) return toast.error("Selecione o usuário da venda.");
+    if (customerMode === "quick" && customerName.trim().length < 2) return toast.error("Informe o nome da pessoa.");
+    if (customerMode === "registered" && !employeeId) return toast.error("Selecione uma pessoa cadastrada.");
     if (!fridgeId) return toast.error("Selecione a geladeira.");
     if (!items.length) return toast.error("Adicione pelo menos um produto.");
 
     setSaving(true);
     try {
-      const response = await fetch(`${SISBAR_API_URL.replace(/\/functions\/v1\/sisbar-api$/, "")}/rest/v1/rpc/sisbar_admin_create_sale`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: SISBAR_PUBLISHABLE_KEY,
-          Authorization: `Bearer ${SISBAR_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({
-          p_token: session.token,
-          p_employee_id: Number(employeeId),
-          p_fridge_id: Number(fridgeId),
-          p_payment_option: paymentOption,
-          p_payment_method: paymentOption === "immediate" ? paymentMethod : null,
-          p_items: items,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => null) as { message?: string } | null;
-        throw new Error(body?.message?.includes("insufficient_stock") ? "Estoque insuficiente para um dos produtos." : "Não foi possível registrar a venda.");
-      }
-      toast.success(paymentOption === "immediate" ? "Venda registrada como paga." : "Venda registrada em aberto.");
+      await sisbarApi("admin_checkout", {
+        customer_mode: customerMode,
+        customer_name: customerMode === "quick" ? customerName.trim() : undefined,
+        employee_id: customerMode === "registered" ? Number(employeeId) : undefined,
+        fridge_id: Number(fridgeId),
+        payment_option: paymentOption,
+        payment_method: paymentOption === "immediate" ? paymentMethod : null,
+        items,
+      }, session.token);
+      toast.success(paymentOption === "immediate" ? "Saída registrada como paga." : "Saída registrada em aberto.");
       setCart({});
+      setCustomerName("");
+      setProductSearch("");
       setOpen(false);
       window.dispatchEvent(new Event("sisbar:admin-sale-created"));
-      window.location.reload();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível registrar a venda.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível registrar a saída.");
     } finally {
       setSaving(false);
     }
@@ -149,22 +148,33 @@ export function AdminManualSale() {
   return (
     <>
       <Button type="button" onClick={openDialog} className="fixed bottom-5 right-5 z-40 h-12 rounded-full bg-[#ef7d22] px-5 text-white shadow-lg hover:bg-[#dc6d17] sm:bottom-7 sm:right-7">
-        <ShoppingCart className="size-4" /> Registrar venda
+        <ShoppingCart className="size-4" /> Registrar saída
       </Button>
 
       <Dialog open={open} onOpenChange={(next) => !saving && setOpen(next)}>
         <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Registrar venda</DialogTitle>
-            <DialogDescription>Registre uma retirada em nome de um usuário quando ele não puder acessar o sistema.</DialogDescription>
+            <DialogTitle>Registrar saída</DialogTitle>
+            <DialogDescription>Baixe os itens do estoque usando apenas um nome ou uma pessoa já cadastrada.</DialogDescription>
           </DialogHeader>
 
-          {loading ? <div className="py-10 text-center text-sm text-slate-500">Carregando usuários e produtos...</div> : <div className="space-y-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Usuário</Label>
-                <Select value={employeeId} onValueChange={setEmployeeId}><SelectTrigger className="w-full"><SelectValue placeholder="Selecione o usuário" /></SelectTrigger><SelectContent>{employees.map((employee) => <SelectItem key={employee.id} value={String(employee.id)}>{employee.full_name} · {employee.enrollment}</SelectItem>)}</SelectContent></Select>
+          {loading ? <div className="py-10 text-center text-sm text-slate-500">Carregando pessoas e produtos...</div> : <div className="space-y-5">
+            <div className="rounded-xl border bg-slate-50 p-1">
+              <div className="grid grid-cols-2 gap-1" role="group" aria-label="Forma de identificar a pessoa">
+                <Button type="button" variant={customerMode === "quick" ? "default" : "ghost"} className={customerMode === "quick" ? "bg-[#102a43] hover:bg-[#173d5f]" : ""} onClick={() => setCustomerMode("quick")}><UserRoundPlus /> Nome rápido</Button>
+                <Button type="button" variant={customerMode === "registered" ? "default" : "ghost"} className={customerMode === "registered" ? "bg-[#102a43] hover:bg-[#173d5f]" : ""} onClick={() => setCustomerMode("registered")}><Users /> Já cadastrado</Button>
               </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {customerMode === "quick" ? <div className="space-y-2">
+                <Label htmlFor="quick-customer-name">Nome da pessoa</Label>
+                <Input id="quick-customer-name" value={customerName} onChange={(event) => setCustomerName(event.target.value)} maxLength={140} autoComplete="off" placeholder="Ex.: João" autoFocus />
+                <p className="text-xs leading-5 text-slate-500">Se esse nome já existir, a saída será somada ao mesmo histórico.</p>
+              </div> : <div className="space-y-2">
+                <Label>Pessoa cadastrada</Label>
+                <Select value={employeeId} onValueChange={setEmployeeId}><SelectTrigger className="w-full"><SelectValue placeholder="Selecione a pessoa" /></SelectTrigger><SelectContent>{employees.map((employee) => <SelectItem key={employee.id} value={String(employee.id)}>{employee.full_name} · {employee.enrollment}</SelectItem>)}</SelectContent></Select>
+              </div>}
               <div className="space-y-2">
                 <Label>Geladeira / estoque</Label>
                 <Select value={fridgeId} onValueChange={(value) => { setFridgeId(value); setCart({}); }}><SelectTrigger className="w-full"><SelectValue placeholder="Selecione" /></SelectTrigger><SelectContent>{productsData?.fridges.filter((fridge) => fridge.active !== false).map((fridge) => <SelectItem key={fridge.id} value={String(fridge.id)}>{fridge.name}</SelectItem>)}</SelectContent></Select>
@@ -173,13 +183,14 @@ export function AdminManualSale() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between"><Label>Produtos</Label><span className="text-xs text-slate-500">{itemCount} item(ns)</span></div>
+              <div className="relative"><Search className="absolute left-3 top-2.5 size-4 text-slate-400" /><Input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} className="bg-white pl-9" placeholder="Buscar produto" /></div>
               <div className="max-h-72 divide-y overflow-y-auto rounded-xl border bg-white">
-                {availableProducts.map((product) => {
+                {visibleProducts.map((product) => {
                   const quantity = cart[product.id] ?? 0;
                   const stock = quantityFor(product);
                   return <div key={product.id} className="flex items-center gap-3 p-3"><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{product.name}</p><p className="text-xs text-slate-500">{brl.format(product.sale_price)} · estoque {stock}</p></div><div className="flex items-center gap-1"><Button type="button" variant="outline" size="icon-sm" disabled={quantity === 0} onClick={() => changeQuantity(product, -1)}><X className="size-3" /></Button><Input className="h-8 w-12 px-1 text-center" value={quantity} readOnly /><Button type="button" variant="outline" size="icon-sm" disabled={stock <= quantity} onClick={() => changeQuantity(product, 1)}><Plus className="size-3" /></Button></div></div>;
                 })}
-                {!availableProducts.length && <div className="p-6 text-center text-sm text-slate-500">Nenhum produto ativo cadastrado.</div>}
+                {!visibleProducts.length && <div className="p-6 text-center text-sm text-slate-500">Nenhum produto encontrado.</div>}
               </div>
             </div>
 
@@ -188,12 +199,12 @@ export function AdminManualSale() {
               {paymentOption === "immediate" && <div className="space-y-2"><Label>Forma de pagamento</Label><Select value={paymentMethod} onValueChange={setPaymentMethod}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="pix">Pix</SelectItem><SelectItem value="cash">Dinheiro</SelectItem><SelectItem value="transfer">Transferência</SelectItem></SelectContent></Select></div>}
             </div>
 
-            <div className="flex items-center justify-between rounded-xl bg-[#102a43] p-4 text-white"><div><p className="text-xs text-slate-300">Total da venda</p><p className="text-2xl font-bold">{brl.format(total)}</p></div><Banknote className="size-6 text-[#ef7d22]" /></div>
+            <div className="flex items-center justify-between rounded-xl bg-[#102a43] p-4 text-white"><div><p className="text-xs text-slate-300">Total da saída</p><p className="text-2xl font-bold">{brl.format(total)}</p></div><Banknote className="size-6 text-[#ef7d22]" /></div>
           </div>}
 
           <DialogFooter>
             <Button variant="outline" disabled={saving} onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button disabled={loading || saving || !itemCount || !employeeId || !fridgeId} className="bg-[#102a43] hover:bg-[#173d5f]" onClick={() => void submit()}>{saving ? "Registrando..." : "Confirmar venda"}</Button>
+            <Button disabled={loading || saving || !itemCount || !fridgeId || (customerMode === "quick" ? customerName.trim().length < 2 : !employeeId)} className="bg-[#102a43] hover:bg-[#173d5f]" onClick={() => void submit()}>{saving ? "Registrando..." : "Confirmar saída"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

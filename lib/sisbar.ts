@@ -36,6 +36,7 @@ export type Account = {
   organization_unit?: string | null;
   extension?: string | null;
   phone?: string | null;
+  is_quick_profile?: boolean;
   must_change_pin?: boolean;
 };
 export type Session = { token: string; expires_at: string; account: Account; company: Company };
@@ -51,7 +52,7 @@ export type Sale = {
   sold_at: string;
   paid_at?: string | null;
   payment_method?: string | null;
-  employee?: Pick<Account, "full_name" | "enrollment" | "extension" | "phone" | "organization_unit">;
+  employee?: Pick<Account, "full_name" | "enrollment" | "extension" | "phone" | "organization_unit" | "is_quick_profile">;
   items: SaleItem[];
   sale_items?: SaleItem[];
 };
@@ -62,6 +63,7 @@ export type Employee = {
   full_name: string;
   extension?: string | null;
   phone?: string | null;
+  is_quick_profile?: boolean;
   active: boolean;
   balance: number;
   open_sales: number;

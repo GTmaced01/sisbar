@@ -48,6 +48,32 @@ test("admin mobile navigation and sales status filters stay available", async ()
   assert.match(admin, /\["pending", "partial"\]\.includes/);
 });
 
+test("quick outflows accept a typed name and receivables expose item details", async () => {
+  const admin = await source("app/admin-dashboard.tsx");
+  const quickSale = await source("components/admin-manual-sale.tsx");
+  const api = await source("supabase/functions/sisbar-api/index.ts");
+  const migration = await source("supabase/migrations/20260919173000_add_quick_outflows.sql");
+  const serviceRoleGrant = await source("supabase/migrations/20260919174500_allow_quick_outflow_edge_api.sql");
+  const rpcRestriction = await source("supabase/migrations/20260919175500_restrict_admin_sale_rpcs_to_edge.sql");
+  assert.match(quickSale, /customerMode/);
+  assert.match(quickSale, /Nome rápido/);
+  assert.match(quickSale, /customer_name/);
+  assert.match(quickSale, /admin_checkout/);
+  assert.doesNotMatch(quickSale, /window\.location\.reload/);
+  assert.match(admin, /Clique em uma pessoa para conferir cada retirada/);
+  assert.match(admin, /sale\.items\?\.map/);
+  assert.match(admin, /Cadastro rápido/);
+  assert.match(api, /async function adminCheckout/);
+  assert.match(api, /sisbar_admin_create_quick_sale/);
+  assert.match(migration, /is_quick_profile boolean not null default false/);
+  assert.match(migration, /create or replace function public\.sisbar_admin_create_quick_sale/);
+  assert.match(migration, /pg_advisory_xact_lock/);
+  assert.match(serviceRoleGrant, /sisbar_admin_create_sale[\s\S]+service_role/);
+  assert.match(serviceRoleGrant, /sisbar_admin_create_quick_sale[\s\S]+service_role/);
+  assert.match(rpcRestriction, /sisbar_admin_create_sale[\s\S]+from anon, authenticated/);
+  assert.match(rpcRestriction, /sisbar_admin_create_quick_sale[\s\S]+from anon, authenticated/);
+});
+
 test("mobile views use bounded layouts and dedicated compact records", async () => {
   const admin = await source("app/admin-dashboard.tsx");
   const store = await source("app/employee-store.tsx");
